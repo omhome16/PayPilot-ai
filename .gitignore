@@ -22,3 +22,7 @@ Thumbs.db
 # Demo artifacts
 data/runs/
 *.sqlite3
+
+# Private learning journal (never published)
+learning/
+
