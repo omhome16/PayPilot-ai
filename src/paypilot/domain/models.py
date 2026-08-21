@@ -88,3 +88,4 @@ class FailureEvent(_Strict):
     occurred_at: datetime
     attempt_no: int = Field(ge=1)
     amount_paise: int = Field(gt=0)
+    episode_no: int = Field(default=1, ge=1)  # logical incident grouping (simulator-assigned)

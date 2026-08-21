@@ -80,6 +80,11 @@ def test_insufficient_funds_permits_smart_retry() -> None:
     assert Intervention.SMART_RETRY in FailureMode.INSUFFICIENT_FUNDS.permitted_interventions
 
 
+def test_limit_exceeded_permits_rail_switch() -> None:
+    """Amount over cap ⇒ re-authorize on a rail with higher caps (e.g. UPI→eNACH)."""
+    assert Intervention.RAIL_SWITCH in FailureMode.LIMIT_EXCEEDED.permitted_interventions
+
+
 # --- Events and customers ------------------------------------------------------
 
 

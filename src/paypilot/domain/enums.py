@@ -75,5 +75,12 @@ class FailureMode(StrEnum):
                     }
                 )
             case FailureMode.LIMIT_EXCEEDED:
-                # amount exceeds mandate/e-mandate cap — retrying same amount cannot help
-                return frozenset({Intervention.PAYMENT_LINK, Intervention.HUMAN_ESCALATION})
+                # amount exceeds mandate/e-mandate cap — same-amount retry cannot help;
+                # re-authorize on a higher-cap rail or use non-mandate channels
+                return frozenset(
+                    {
+                        Intervention.PAYMENT_LINK,
+                        Intervention.RAIL_SWITCH,
+                        Intervention.HUMAN_ESCALATION,
+                    }
+                )
