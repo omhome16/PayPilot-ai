@@ -22,6 +22,7 @@ class Subscription(_Strict):
     plan_name: str
     amount_paise: int  # ₹199.00 == 19_900
     cycle: str = "monthly"
+    billing_day: int = Field(default=1, ge=1, le=28)  # day of month the debit fires
 
     @field_validator("amount_paise")
     @classmethod
