@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     env: str = "dev"
     log_level: str = "INFO"
 
+    # --- LLM narration layer (Phase 3): entirely optional -----------------------
+    openrouter_api_key: SecretStr | None = None
+    openrouter_model: str = "z-ai/glm-4.6"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
     @field_validator("rzp_key_id")
     @classmethod
     def _reject_live_keys(cls, v: str) -> str:
