@@ -76,6 +76,13 @@ def test_event_ids_unique() -> None:
     assert len(ids) == len(set(ids))
 
 
+def test_all_events_are_timezone_aware() -> None:
+    """Regression: Phase-1 generator produced NAIVE datetimes (no tzinfo), which
+    exploded downstream the moment the engine compared them against aware ones."""
+    for e in _world()[1]:
+        assert e.occurred_at.tzinfo is not None, f"{e.id} is naive"
+
+
 # --- Realism ---------------------------------------------------------------------
 
 

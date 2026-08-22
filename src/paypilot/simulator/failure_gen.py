@@ -52,11 +52,11 @@ class FailureGenSpec:
 
 
 def _debit_datetime_utc(day: dt.date, rng: random.Random) -> dt.datetime:
-    """A debit moment inside NPCI-friendly hours (08:00–21:59 IST)."""
+    """A debit moment inside NPCI-friendly hours (08:00–21:59 IST), timezone-aware UTC."""
     ist_hour = rng.randint(8, 21)
     ist_minute = rng.randint(0, 59)
     ist_naive = dt.datetime(day.year, day.month, day.day, ist_hour, ist_minute)
-    return ist_naive - _IST_OFFSET  # UTC instant of that IST wall-clock time
+    return ist_naive.replace(tzinfo=dt.UTC) - _IST_OFFSET  # UTC instant of that IST wall-clock
 
 
 def generate_failures(population: Population, spec: FailureGenSpec) -> tuple[FailureEvent, ...]:
