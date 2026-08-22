@@ -51,6 +51,36 @@ attempt decay ×0.72 per additional attempt (**ASSUMPTION**, fatigue/signal intu
 | HUMAN_ESCALATION × {isf, timeout, downtime, limit, revoked} | 0.30 / 0.35 / 0.33 / 0.28 / 0.20 | assumption | high-touch beats automation per-contact but costs opex; costs tracked separately in Phase 6 |
 | Global bounds | clamp [0.02, 0.85] | design choice | nothing is impossible; nothing is certain |
 
+## 3-v2. RECALIBRATION (2026-08-21, during Phase 2 design) — per-attempt probabilities
+
+**What was wrong:** §3's values were calibrated as *per-channel* success attribution
+("of episodes this channel touched, it recovered X%"). A policy STACKS attempts, and
+cumulative probability at those levels implied ~80% eventual recovery for plain retries —
+far above the published naive band (20–35%). The baseline would have been superhuman,
+making any agent delta meaningless.
+
+**The correction:** all cells reinterpreted as **P(success of ONE attempt)** under the
+stated context. New table:
+
+| Intervention × Mode | Per-attempt P | Type | Note |
+|---|---|---|---|
+| SMART_RETRY × insufficient_funds | 0.34 | derived-v2 | timed-well; untimed ×0.7 ⇒ ≈0.24 |
+| SMART_RETRY × auth_timeout / bank_downtime | 0.30 / 0.27 | published-anchored-v2 | transients resolve on retry |
+| RETRY × auth_timeout / bank_downtime | 0.22 / 0.19 | published-anchored-v2 | blind retry, outage may persist |
+| PAYMENT_LINK × {revoked, limit, isf} | 0.22 / 0.26 / 0.24 | assumption-v2 | |
+| RAIL_SWITCH × limit_exceeded | 0.24 | assumption-v2 | |
+| VOICE_NUDGE × {isf, revoked} | 0.28 / 0.16 | assumption-v2 | |
+| HUMAN_ESCALATION × all five | 0.14–0.24 | assumption-v2 | |
+
+Modifiers v2: salary-proximity ×1.50/1.50/1.45/1.30 (0–3 days); **untimed SMART_RETRY
+×0.70** (blind timing forfeits the edge); attempt decay **×0.60** per extra attempt.
+
+**Sanity check (why this is right):** blind retry on ISF ≈ 0.24/attempt → 2 attempts ≈ 42%
+episode-cumulative on that mode; blended across ALL modes (naive merchants earn ₹0 on
+revoked/limit episodes) lands ≈ 25–30% overall — inside the published 20–35% band. ✅
+
+---
+
 ## 4. What this world deliberately does NOT model
 
 - Customer cashflow *memory* across months (each episode independent)

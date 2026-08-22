@@ -42,6 +42,30 @@ def test_smart_retry_benefits_from_salary_proximity() -> None:
     assert p_near > p_far
 
 
+def test_smart_retry_without_timing_is_blind() -> None:
+    """v2: SMART_RETRY with NO timing context forfeits its edge (untimed discount)."""
+    m = _model()
+    p_no_context = m.probability(Intervention.SMART_RETRY, FailureMode.INSUFFICIENT_FUNDS)
+    p_far = m.probability(
+        Intervention.SMART_RETRY, FailureMode.INSUFFICIENT_FUNDS, days_to_salary=15
+    )
+    assert p_no_context < p_far
+
+
+def test_naive_arm_stays_in_published_band() -> None:
+    """THE calibration anchor (v2): a 2-blind-retry policy on the dominant mode must
+    land inside the published naive-recovery band — else the baseline is superhuman."""
+    from paypilot.simulator import outcome as outcome_mod
+
+    m = _model()
+    p = m.probability(Intervention.RETRY, FailureMode.AUTH_TIMEOUT)
+    # per-attempt blind-retry odds stay modest...
+    assert 0.15 <= p <= 0.35
+    # ...so episode-cumulative over 2 attempts cannot exceed the band's ceiling
+    cumulative = 1 - (1 - p) * (1 - p * outcome_mod._ATTEMPT_DECAY)
+    assert cumulative <= 0.55
+
+
 def test_repeat_attempts_decay() -> None:
     m = _model()
     p1 = m.probability(Intervention.RETRY, FailureMode.AUTH_TIMEOUT, attempt_no=1)

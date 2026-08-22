@@ -22,72 +22,79 @@ class _Cell:
     source: str  # "published:<ref>" or "assumption"
 
 
-# Base cells: P(recovery) for attempt_no=1, days_to_salary=7 (neutral context).
+# Base cells: P(success) for ONE ATTEMPT under stated context. v2 recalibration
+# (2026-08-21, see SIMULATOR_ASSUMPTIONS.md §3-v2): Phase-1 values conflated
+# per-channel attribution with per-attempt probability — stacked attempts at those
+# levels implied impossible ~80% baseline recovery. Per-attempt values below keep
+# the naive arm inside the published 20–35% eventual-recovery band.
 _CELLS: dict[tuple[Intervention, FailureMode], _Cell] = {
     # --- SMART_RETRY (timed re-attempt on same mandate) --------------------------
+    # "timed well" = near salary date (bonus applied); passing NO timing context
+    # applies the untimed discount (see probability()) — blind timing forfeits the edge.
     (Intervention.SMART_RETRY, FailureMode.INSUFFICIENT_FUNDS): _Cell(
-        0.55, "derived: mid-band of dunning 65–75% minus timing risk; dominant mode"
+        0.34, "derived-v2: per-attempt, timed-well; untimed ×0.7 ⇒ ≈0.24"
     ),
     (Intervention.SMART_RETRY, FailureMode.AUTH_TIMEOUT): _Cell(
-        0.70, "published-anchored: transient infra failures retry well"
+        0.30, "published-anchored-v2: transient infra failures resolve on retry"
     ),
     (Intervention.SMART_RETRY, FailureMode.BANK_DOWNTIME): _Cell(
-        0.68, "published-anchored: transient infra failures retry well"
+        0.27, "published-anchored-v2: same class; may still be down at blind retry"
     ),
-    # --- RETRY (naive, untimed) — deliberately mediocre: this is the baseline ----
+    # --- RETRY (naive, untimed by definition) — the baseline's honest anchor -----
     (Intervention.RETRY, FailureMode.AUTH_TIMEOUT): _Cell(
-        0.45, "published-anchored: naive retry band 20–35%, transient modes sit higher"
+        0.22, "published-anchored-v2: blind retry during possible ongoing downtime"
     ),
     (Intervention.RETRY, FailureMode.BANK_DOWNTIME): _Cell(
-        0.40, "published-anchored: naive retry band, downtime may persist past blind retry"
+        0.19, "published-anchored-v2: blind retry may land in same outage"
     ),
     # --- PAYMENT_LINK (customer-initiated, consent-fresh) -------------------------
     (Intervention.PAYMENT_LINK, FailureMode.MANDATE_REVOKED): _Cell(
-        0.30, "assumption: win-back after consent withdrawal; no public benchmark"
+        0.22, "assumption-v2: win-back after consent withdrawal; no public benchmark"
     ),
     (Intervention.PAYMENT_LINK, FailureMode.LIMIT_EXCEEDED): _Cell(
-        0.35, "assumption: one-off over-cap payment converts reasonably"
+        0.26, "assumption-v2: one-off over-cap payment converts reasonably"
     ),
     (Intervention.PAYMENT_LINK, FailureMode.INSUFFICIENT_FUNDS): _Cell(
-        0.38, "assumption: customer pays when ready rather than when debited"
+        0.24, "assumption-v2: customer pays when ready rather than when debited"
     ),
     # --- RAIL_SWITCH (re-authorize on higher-cap rail) ----------------------------
     (Intervention.RAIL_SWITCH, FailureMode.LIMIT_EXCEEDED): _Cell(
-        0.42, "assumption: requires customer re-auth friction; works when cap was the issue"
+        0.24, "assumption-v2: re-auth friction caps conversion; works when cap was the blocker"
     ),
-    # --- VOICE_NUDGE (Hinglish call → human completes payment) --------------------
+    # --- VOICE_NUDGE (Hinglish call → customer completes payment) -----------------
     (Intervention.VOICE_NUDGE, FailureMode.INSUFFICIENT_FUNDS): _Cell(
-        0.45, "assumption: personal contact lifts conversion; capped by effort required"
+        0.28, "assumption-v2: personal contact lifts per-touch conversion"
     ),
     (Intervention.VOICE_NUDGE, FailureMode.MANDATE_REVOKED): _Cell(
-        0.25, "assumption: win-back via call, lower than link (more intrusive)"
+        0.16, "assumption-v2: intrusive channel in win-back context"
     ),
     # --- HUMAN_ESCALATION (ops team takes over) -----------------------------------
-    (Intervention.HUMAN_ESCALATION, FailureMode.MANDATE_REVOKED): _Cell(
-        0.20, "assumption: high-touch saves some enterprise relationships"
-    ),
     (Intervention.HUMAN_ESCALATION, FailureMode.INSUFFICIENT_FUNDS): _Cell(
-        0.30, "assumption: human negotiation (payment plan) beats any automated channel"
+        0.22, "assumption-v2: human negotiation beats automation per-touch, costs opex"
     ),
     (Intervention.HUMAN_ESCALATION, FailureMode.AUTH_TIMEOUT): _Cell(
-        0.35, "assumption: ops can complete manual auth flows customers abandon"
+        0.24, "assumption-v2: ops completes manual auth flows"
     ),
     (Intervention.HUMAN_ESCALATION, FailureMode.BANK_DOWNTIME): _Cell(
-        0.33, "assumption: ops coordinates alternate rail while bank recovers"
+        0.22, "assumption-v2: ops coordinates alternate rail"
     ),
     (Intervention.HUMAN_ESCALATION, FailureMode.LIMIT_EXCEEDED): _Cell(
-        0.28, "assumption: ops arranges mandate upgrade or installment plan"
+        0.20, "assumption-v2: ops arranges mandate upgrade/installment"
+    ),
+    (Intervention.HUMAN_ESCALATION, FailureMode.MANDATE_REVOKED): _Cell(
+        0.14, "assumption-v2: high-touch saves some relationships"
     ),
 }
 
-# Context modifiers
+# Context modifiers (v2)
 _SALARY_PROXIMITY_BONUS = {  # days_to_salary → multiplier on timed retries
-    0: 1.35,
-    1: 1.35,
-    2: 1.30,
-    3: 1.20,
+    0: 1.50,
+    1: 1.50,
+    2: 1.45,
+    3: 1.30,
 }
-_ATTEMPT_DECAY = 0.72  # each subsequent attempt multiplies P by this (fatigue + signal)
+_UNTIMED_DISCOUNT = 0.70  # SMART_RETRY with no timing context = blind, forfeits edge
+_ATTEMPT_DECAY = 0.60  # each subsequent attempt multiplies P by this (fatigue + signal)
 
 _BOUNDS = (0.02, 0.85)
 
@@ -121,6 +128,9 @@ class OutcomeModel:
                     bonus = 1.15
                 if bonus is not None:
                     p *= bonus
+            elif intervention is Intervention.SMART_RETRY:
+                # SMART_RETRY without timing context is just a blind retry
+                p *= _UNTIMED_DISCOUNT
             if attempt_no > 1:
                 p *= _ATTEMPT_DECAY ** (attempt_no - 1)
         elif attempt_no > 1:
