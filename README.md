@@ -32,10 +32,10 @@ Phases 0–4 complete (see `learning/` journal for the full build narrative).
 | 2 | Fair-naive baseline arm + RunEngine referee — **benchmark: 26.7% episodes, ₹8,317** | ✅ |
 | 3 | Agent core + head-to-head — **5.6× baseline rupees, zero violations** | ✅ |
 | 4 | Agentic graph: LLM brain behind guardrails · record/replay · live Payment Links · 20-world stability (**90% win-rate, mean 4.12×**) | ✅ |
-| 5 | Hinglish voice module | ⬜ |
-| 6 | Eval harness + measured report | ⬜ |
-| 7 | Dashboard | ⬜ |
-| 8 | Pitch video + submission | ⬜ |
+| 5 | Hinglish voice module | ✅ scripts + safety validator + VoiceNode artifacts (telephony pluggable later) |
+| 6 | Eval harness + measured report | ✅ `EVAL_REPORT.md` — 20 worlds, 90% win-rate, 4.12× mean, zero violations |
+| 7 | Dashboard | ✅ `DASHBOARD.html` — monochrome glassmorphism, pre-rendered static, real run data |
+| 8 | Pitch video + submission | 🎬 script ready (`PITCH_SCRIPT.md`); honesty doc `LIMITATIONS.md` done |
 
 ## Architecture (Phase 4)
 
