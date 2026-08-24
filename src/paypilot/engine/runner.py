@@ -88,6 +88,8 @@ class RunEngine:
         self._cust_by_id = {c.id: c for c in population.customers}
         self._mandates = list(population.mandates)
         self._rail_by_customer = {m.customer_id: m.rail for m in population.mandates}
+        # P4.5: profiles ride on every EpisodeView (both arms see them — fairness)
+        self._profile_by_customer = {p.customer_id: p for p in getattr(population, "profiles", ())}
         self._window = window
         self._seed = seed
 
@@ -241,6 +243,7 @@ class RunEngine:
     ) -> None:
         sub_id, ep_no = key
         st = episodes[key]
+        customer_id = self._subs_by_id[sub_id].customer_id
         view = EpisodeView(
             subscription_id=sub_id,
             episode_no=ep_no,
@@ -251,6 +254,7 @@ class RunEngine:
             rail=st.rail,
             billing_day=st.billing_day,
             vertical=st.vertical,
+            profile=self._profile_by_customer.get(customer_id),
         )
         proposal = policy.next_action(view)
         if proposal is None:
