@@ -73,6 +73,7 @@ class TemplateScriptWriter:
         name = str(ctx.get("customer_name", "ji")).split()[0]
         merchant = str(ctx["merchant"])
         amount = float(ctx["amount_rupees"])
+        amount_str = f"{amount:,.0f}"  # Indian-friendly grouping: 1,499
         url = str(ctx.get("payment_url", ""))
         days = ctx.get("days_to_salary")
         salary_line = (
@@ -82,7 +83,7 @@ class TemplateScriptWriter:
         )
         text = (
             f"Namaste {name} ji! Main {merchant} ki taraf se bol rahi hoon. "
-            f"Aapka ₹{amount:.0f} ka payment pending dikha raha hai. "
+            f"Aapka ₹{amount_str} ka payment pending dikha raha hai. "
             f"{salary_line}"
             f"Aap is link se bas do minute mein pay kar sakte hain: {url} "
             "Aur agar aap ye subscription aage nahi chalana chahte, toh humein bata dijiye — "
