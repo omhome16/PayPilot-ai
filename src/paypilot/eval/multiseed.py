@@ -22,20 +22,45 @@ _WINDOW = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
 
 
 def scripted_strategist(state: dict[str, Any]) -> BrainProposal:
-    """The recovery doctrine (research/07): patience ONLY when the calendar allows it.
+    """Doctrine v3 (research/07 rules, mode-aware).
 
-    Lesson from seed-1 (see learning doc 07): a fixed 'always wait first' rule bled
-    money in late-month worlds — salary day landed past the recovery horizon and the
-    patience move was discarded. Context beats cadence: check days_to_salary first.
+    v2 lesson (seed-1): patience needs calendar context.
+    v3 lesson (20-world sweep): voice/humans are LOW-probability channels on
+    transient modes where timed retries excel — save them for consent-broken
+    episodes and last resorts. Expected value beats channel fanciness.
     """
+    mode = state["mode"]
+    transient = mode in {"insufficient_funds", "auth_timeout", "bank_downtime"}
+    consent_broken = mode in {"mandate_revoked", "limit_exceeded"}
     days_to_salary = state.get("days_to_salary")
-    patient_possible = days_to_salary is not None and 0 <= days_to_salary <= 7
-    if state["attempts"] <= 1 and patient_possible:
+    near_payday = days_to_salary is not None and 0 <= days_to_salary <= 7
+
+    # 1) fresh cash-crunch near payday → strategic patience
+    if state["attempts"] <= 1 and mode == "insufficient_funds" and near_payday:
         return BrainProposal(
             action=Intervention.WAIT_SELF_HEAL,
             on_salary_day=True,
-            reason="fresh crunch failure near payday; patience first",
+            reason="fresh crunch near payday; patience first",
         )
+
+    # 2) consent-broken mandates → win-back link (the one channel that fits)
+    if consent_broken:
+        return BrainProposal(
+            action=Intervention.PAYMENT_LINK,
+            days_ahead=1,
+            reason="consent-fresh self-serve win-back",
+        )
+
+    # 3) transient modes → timed retries are the highest-EV move
+    if transient:
+        return BrainProposal(
+            action=Intervention.SMART_RETRY,
+            on_salary_day=(days_to_salary is not None and days_to_salary <= 10),
+            days_ahead=2,
+            reason="timed retry on recoverable rail",
+        )
+
+    # 4) anything else → escalate by value
     if state["amount_rupees"] >= 1000:
         return BrainProposal(
             action=Intervention.VOICE_NUDGE,
