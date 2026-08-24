@@ -42,8 +42,9 @@ def test_render_html_contains_glass_shell_and_data() -> None:
     html = render_html(data)
     assert "PayPilot.AI" in html
     assert "backdrop-filter" in html  # glassmorphism present
-    assert "rgba(255, 255, 255" in html  # white-on-black glass fill
+    assert "rgba(255,255,255" in html  # white-on-black glass fill
     assert data["headline"]["win_rate"] in html  # real number baked in
+    assert "<script" not in html  # fully static — no JS to be blocked
 
 
 def test_save_dashboard_writes_file(tmp_path) -> None:
