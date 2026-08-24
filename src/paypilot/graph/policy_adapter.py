@@ -11,7 +11,7 @@ from typing import Any
 from paypilot.domain.calendar import IndianPaymentCalendar
 from paypilot.domain.enums import Intervention
 from paypilot.engine.policy import EpisodeView, ProposedAction
-from paypilot.graph.brain import Brain, FakeBrain
+from paypilot.graph.brain import Brain, BrainProposal, FakeBrain
 from paypilot.graph.guardrails import (
     GuardrailReport,
     Guardrails,
@@ -30,6 +30,9 @@ class DecisionJournalEntry:
     final_action: str | None
     run_at: dt.datetime | None
     reason: str
+    timing_on_salary_day: bool = False
+    timing_days_ahead: int = 0
+    abstain: bool = False  # True = recorded 'do nothing' consult
 
 
 def _next_salary(ist_date: dt.date) -> dt.date:
@@ -50,6 +53,7 @@ class GraphPolicy:
         self.guardrails: Guardrails = guardrails or StandardGuardrails()
         self.wait_budget = wait_budget_per_episode
         self.wait_used: dict[str, bool] = {}
+        self._consult_seq: dict[str, int] = {}  # per-episode consult counter
         self.override_log: list[GuardrailReport] = []
         self.journal: list[DecisionJournalEntry] = []
 
@@ -57,12 +61,26 @@ class GraphPolicy:
 
     def next_action(self, episode: EpisodeView) -> ProposedAction | None:
         key = f"{episode.subscription_id}:{episode.episode_no}"
+        seq = self._consult_seq.get(key, 0) + 1
+        self._consult_seq[key] = seq
 
         # SENSE — build the compact story the brain reasons over
         state: dict[str, Any] = self._sense(episode)
 
         # THINK — the brain proposes (LLM in LIVE mode; FakeBrain in tests/replay)
         proposal = self.brain.propose(state)
+
+        # Replay may carry an explicit abstention recorded earlier
+        if getattr(proposal, "abstain", False):
+            self._journal(
+                key,
+                proposal,
+                approved=True,
+                final=None,
+                when=None,
+                reason="replay: recorded abstention",
+            )
+            return None
 
         # VALIDATE — rails dispose; safe fallbacks run on refusal
         report = self.guardrails.check(
@@ -82,23 +100,78 @@ class GraphPolicy:
         when = proposal_run_at(proposal, episode)
         limit = episode.first_failed_at + dt.timedelta(days=21)
         if when > limit:
-            return None  # even fallbacks respect the horizon
+            # Journal the abstention so replays align consult-for-consult
+            self._journal(
+                key,
+                proposal,
+                approved=report.approved,
+                final=None,
+                when=None,
+                reason=f"beyond hard stop ({limit.date()})",
+            )
+            return None
 
+        self._journal(
+            key,
+            proposal,
+            approved=report.approved,
+            final=proposal.action,
+            when=when,
+            reason=proposal.reason or report.reason,
+        )
+        return ProposedAction(intervention=proposal.action, run_at=when)
+
+    def _journal(
+        self,
+        key: str,
+        proposal: BrainProposal,
+        *,
+        approved: bool,
+        final: Intervention | None,
+        when: dt.datetime | None,
+        reason: str,
+    ) -> None:
         self.journal.append(
             DecisionJournalEntry(
                 episode_key=key,
                 proposal_action=proposal.action.value,
-                approved=report.approved,
-                final_action=proposal.action.value,
+                approved=approved,
+                final_action=final.value if final is not None else None,
                 run_at=when,
-                reason=proposal.reason or report.reason,
+                reason=reason,
+                timing_on_salary_day=proposal.on_salary_day,
+                timing_days_ahead=proposal.days_ahead,
+                abstain=final is None,
             )
         )
-        return ProposedAction(intervention=proposal.action, run_at=when)
+
+    # -- record/replay support (D30) -------------------------------------------------
+
+    def journal_entries(self) -> list[dict[str, Any]]:
+        """Structured, JSON-ready records of every THINK+VALIDATE outcome."""
+        out: list[dict[str, Any]] = []
+        for i, e in enumerate(self.journal, start=1):
+            out.append(
+                {
+                    "seq": i,
+                    "episode_key": e.episode_key,
+                    "proposal": {
+                        "action": e.proposal_action,
+                        "on_salary_day": e.timing_on_salary_day,
+                        "days_ahead": e.timing_days_ahead,
+                        "abstain": e.abstain,
+                    },
+                    "approved": e.approved,
+                    "final_action": e.final_action,
+                    "reason": e.reason,
+                }
+            )
+        return out
 
     # -- internals -------------------------------------------------------------------
 
     def _sense(self, ep: EpisodeView) -> dict[str, Any]:
+        key = f"{ep.subscription_id}:{ep.episode_no}"
         ist_date = (ep.first_failed_at + _IST).date()
         days_to_salary = (_next_salary(ist_date) - ist_date).days
         state = BrainStateData(
@@ -106,12 +179,16 @@ class GraphPolicy:
             amount_rupees=round(ep.amount_paise / 100, 2),
             attempts=ep.attempts_made,
             touches_used=max(ep.attempts_made - 1, 0),
-            wait_already_used=self.wait_used.get(f"{ep.subscription_id}:{ep.episode_no}", False),
+            wait_already_used=self.wait_used.get(key, False),
             rail=str(ep.rail),
             vertical=ep.vertical,
             days_to_salary=days_to_salary,
         )
-        return {**state.__dict__}  # plain JSON-friendly dict for the LLM path
+        return {
+            "episode_key": key,
+            "consult_seq": self._consult_seq.get(key, 1),
+            **state.__dict__,
+        }  # plain JSON-friendly dict for the LLM/replay path
 
 
 # Imported late to avoid a cycle in docs; simple data holder:
