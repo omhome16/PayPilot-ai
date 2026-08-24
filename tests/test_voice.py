@@ -1,6 +1,7 @@
 """P5 contracts: Hinglish call scripts that are useful AND consent-safe."""
 
 import pytest
+
 from paypilot.voice.script import (
     CallScript,
     LLMScriptWriter,
