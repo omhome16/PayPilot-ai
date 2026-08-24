@@ -182,8 +182,8 @@ def render_html(data: dict[str, Any]) -> str:
       <tr><td>At risk</td>
           <td style="text-align:right">₹{focus["at_risk_rupees"]:,}</td></tr>
       <tr><td>Episodes recovered</td>
-          <td style="text-align:right">{focus['episodes_recovered']}
-            / {focus['episodes_total']}</td></tr>
+          <td style="text-align:right">{focus["episodes_recovered"]}
+            / {focus["episodes_total"]}</td></tr>
       <tr><td>Compliance violations</td>
           <td style="text-align:right">{data["headline"]["violations"]}</td></tr>
     </tbody></table>
