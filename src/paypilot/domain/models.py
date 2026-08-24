@@ -89,3 +89,22 @@ class FailureEvent(_Strict):
     attempt_no: int = Field(ge=1)
     amount_paise: int = Field(gt=0)
     episode_no: int = Field(default=1, ge=1)  # logical incident grouping (simulator-assigned)
+
+
+class CustomerProfile(_Strict):
+    """P4.5 memory: past-behavior summary a recovery brain may consult.
+
+    Generated FROM hidden traits at population-build time, so history is
+    informative about the customer but can never leak future outcomes.
+    """
+
+    customer_id: str
+    tenure_cycles: int = Field(ge=1, le=36)  # months as a subscriber
+    paid_on_time: int = Field(ge=0)
+    missed_cycles: int = Field(ge=0)  # prior failed months (before this window)
+    reliability: float = Field(ge=0.0, le=1.0)  # hidden trait the history was drawn from
+    link_affinity: float = Field(ge=0.0, le=1.0)  # responds to payment links (vs calls)
+
+    @property
+    def on_time_ratio(self) -> float:
+        return self.paid_on_time / self.tenure_cycles

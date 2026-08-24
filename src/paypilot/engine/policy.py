@@ -7,9 +7,12 @@ gives up). The engine owns everything else: gates, timing, outcomes, audit.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from paypilot.domain.enums import FailureMode, Intervention, MandateRail
+
+if TYPE_CHECKING:
+    from paypilot.domain.models import CustomerProfile
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class EpisodeView:
     rail: MandateRail
     billing_day: int  # day-of-month the debit normally fires
     vertical: str
+    profile: "CustomerProfile | None" = None  # P4.5: past-behavior memory (both arms see it)
 
 
 @dataclass(frozen=True)

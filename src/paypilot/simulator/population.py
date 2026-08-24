@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from paypilot.domain.contacts import normalize_indian_contact
 from paypilot.domain.enums import MandateRail, MandateStatus
-from paypilot.domain.models import Customer, Mandate, Subscription
+from paypilot.domain.models import Customer, CustomerProfile, Mandate, Subscription
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class Population:
     customers: tuple[Customer, ...]
     subscriptions: tuple[Subscription, ...]
     mandates: tuple[Mandate, ...]
+    profiles: tuple[CustomerProfile, ...] = ()
 
 
 # Vertical bands in paise: (low, high, share of population, plan-name pool)
@@ -108,10 +109,14 @@ def _pick_vertical(rng: random.Random) -> str:
 
 def generate_population(spec: PopulationSpec) -> Population:
     rng = random.Random(spec.seed)  # noqa: S311 — seeded PRNG is the design (reproducible worlds), not crypto
+    # P4.5 traits come from their OWN stream so adding memory never rewrites
+    # previously-generated worlds (customers/subscriptions/failures stay identical).
+    trait_rng = random.Random((spec.seed * 1_000_003 + 17) & 0xFFFFFFFF)  # noqa: S311
 
     customers: list[Customer] = []
     subscriptions: list[Subscription] = []
     mandates: list[Mandate] = []
+    profiles: list[CustomerProfile] = []
 
     earliest = dt.date(2024, 6, 1).toordinal()
     latest = dt.date(2026, 8, 21).toordinal()
@@ -150,8 +155,27 @@ def generate_population(spec: PopulationSpec) -> Population:
         subscriptions.append(subscription)
         mandates.append(mandate)
 
+        # P4.5: hidden traits GENERATE history — informative, never future-leaking.
+        # Reliability is drawn per customer; the visible history is a small sample
+        # drawn FROM that trait (so it correlates but doesn't reveal the future).
+        reliability = trait_rng.betavariate(5, 2)  # most Indian subscribers are decent payers
+        link_affinity = min(1.0, max(0.0, trait_rng.gauss(0.55, 0.22)))
+        tenure = trait_rng.randint(3, 36)
+        paid = min(tenure, max(0, round(reliability * tenure + trait_rng.gauss(0, 1))))
+        profiles.append(
+            CustomerProfile(
+                customer_id=customer.id,
+                tenure_cycles=tenure,
+                paid_on_time=paid,
+                missed_cycles=tenure - paid,
+                reliability=reliability,
+                link_affinity=link_affinity,
+            )
+        )
+
     return Population(
         customers=tuple(customers),
         subscriptions=tuple(subscriptions),
         mandates=tuple(mandates),
+        profiles=tuple(profiles),
     )

@@ -10,6 +10,7 @@ ASSUMPTION. The eval harness (Phase 6) will run sensitivity analysis over the ta
 
 import random
 from dataclasses import dataclass
+from typing import Any
 
 from paypilot.domain.enums import FailureMode, Intervention
 
@@ -118,6 +119,7 @@ class OutcomeModel:
         *,
         attempt_no: int = 1,
         days_to_salary: int | None = None,
+        profile: "Any | None" = None,
     ) -> float:
         if intervention not in mode.permitted_interventions:
             raise ValueError(
@@ -126,6 +128,15 @@ class OutcomeModel:
 
         cell = _CELLS[(intervention, mode)]
         p = cell.base
+
+        # P4.5: past behavior personalizes outcomes. Reliable payers respond better
+        # to patience/links; link_affinity nudges the link channel either way.
+        if profile is not None:
+            rel = float(getattr(profile, "reliability", 0.5))
+            aff = float(getattr(profile, "link_affinity", 0.5))
+            p *= 0.80 + 0.40 * rel  # 0.80× … 1.20×
+            if intervention is Intervention.PAYMENT_LINK:
+                p *= 0.85 + 0.30 * aff  # 0.85× … 1.15×
 
         if intervention in (Intervention.SMART_RETRY, Intervention.RETRY):
             if days_to_salary is not None:
@@ -151,7 +162,12 @@ class OutcomeModel:
         *,
         attempt_no: int = 1,
         days_to_salary: int | None = None,
+        profile: "Any | None" = None,
     ) -> bool:
         return self._rng.random() < self.probability(
-            intervention, mode, attempt_no=attempt_no, days_to_salary=days_to_salary
+            intervention,
+            mode,
+            attempt_no=attempt_no,
+            days_to_salary=days_to_salary,
+            profile=profile,
         )

@@ -25,6 +25,7 @@ class GraphState(TypedDict, total=False):
     episode: EpisodeView
     consult_seq: int
     story: dict[str, Any]  # SENSE output (JSON-friendly)
+    history_note: str  # SENSE: one-line past-behavior summary (P4.5)
     proposal: BrainProposal  # THINK output (or its approved fallback)
     report: GuardrailReport  # first validation
     report2: GuardrailReport | None  # fallback re-validation (when overridden)
@@ -46,7 +47,26 @@ def _sense(state: GraphState) -> GraphState:
         "vertical": ep.vertical,
         "billing_day": ep.billing_day,
     }
-    return {"story": story}
+    history_note = ""
+    if ep.profile is not None:
+        ratio = round(ep.profile.on_time_ratio, 2)
+        story["history"] = {
+            "tenure_cycles": ep.profile.tenure_cycles,
+            "on_time_ratio": ratio,
+            "missed_cycles": ep.profile.missed_cycles,
+            "link_affinity": round(ep.profile.link_affinity, 2),
+        }
+        tone = (
+            "reliable payer"
+            if ratio >= 0.8
+            else "mixed record"
+            if ratio >= 0.5
+            else "history of misses"
+        )
+        history_note = (
+            f"history: {tone} ({int(ep.profile.paid_on_time)}/{ep.profile.tenure_cycles} on time)"
+        )
+    return {"story": story, "history_note": history_note}
 
 
 def _make_think(brain: Brain) -> "Any":
@@ -64,6 +84,7 @@ def build_recovery_graph(
     brain: Brain | None = None,
     guardrails: Guardrails | None = None,
     hard_stop_days: int = 21,
+    pop: Any | None = None,  # Population; profiles ride inside EpisodeView
 ) -> Any:
     """Compile SENSE→THINK→VALIDATE→ACT/ABSTAIN into a LangGraph StateGraph."""
     brain = brain or FakeBrain()
