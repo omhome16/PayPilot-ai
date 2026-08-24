@@ -81,6 +81,7 @@ def render_html(data: dict[str, Any]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>PayPilot.AI — Recovery Agent Dashboard</title>
 <style>
   :root {{
@@ -90,11 +91,13 @@ def render_html(data: dict[str, Any]) -> str:
     --text: rgba(255,255,255,0.92);
     --muted: rgba(255,255,255,0.55);
     --faint: rgba(255,255,255,0.32);
+    color-scheme: dark;
   }}
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  html {{ background-color: #050505; }}
   body {{
-    background:
-      #050505
+    background-color: #050505;
+    background-image:
       radial-gradient(1200px 800px at 70% -10%, rgba(255,255,255,0.09), transparent),
       radial-gradient(900px 700px at 10% 110%, rgba(255,255,255,0.05), transparent);
     color: var(--text);
@@ -148,7 +151,7 @@ def render_html(data: dict[str, Any]) -> str:
   footer {{ margin-top: 36px; color: var(--faint); font-size: 12.5px; }}
 </style>
 </head>
-<body>
+<body style="margin:0;background-color:#050505;color:#ebebeb">
 <header>
   <h1>PayPilot.AI</h1>
   <p>Agentic recovery of failed subscription payments — LLM brain inside a LangGraph
