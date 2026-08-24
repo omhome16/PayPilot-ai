@@ -23,20 +23,37 @@ payment.failed webhook ──▶ DIAGNOSE (LLM + rules classify the failure mode
 
 ## Status
 
-**Phase 0 — scaffold & spikes.** See [`../PLAN.md`](../PLAN.md) for the full phased roadmap and
-[`../research/`](../research/) for the research that shaped every design decision.
+Phases 0–4 complete (see `learning/` journal for the full build narrative).
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| 0 | Repo scaffold + Razorpay test-mode spike | 🚧 in progress |
-| 1 | Synthetic corpus + calibrated failure simulator | ⬜ |
-| 2 | Baseline (control) dunning arm | ⬜ |
-| 3 | Agent core: diagnose → decide loop | ⬜ |
-| 4 | Interventions: retries, links, rail logic | ⬜ |
+| 0 | Repo scaffold + Razorpay test-mode spike | ✅ |
+| 1 | Synthetic corpus + calibrated failure simulator | ✅ |
+| 2 | Fair-naive baseline arm + RunEngine referee — **benchmark: 26.7% episodes, ₹8,317** | ✅ |
+| 3 | Agent core + head-to-head — **5.6× baseline rupees, zero violations** | ✅ |
+| 4 | Agentic graph: LLM brain behind guardrails · record/replay · live Payment Links · 20-world stability (**90% win-rate, mean 4.12×**) | ✅ |
 | 5 | Hinglish voice module | ⬜ |
 | 6 | Eval harness + measured report | ⬜ |
 | 7 | Dashboard | ⬜ |
 | 8 | Pitch video + submission | ⬜ |
+
+## Architecture (Phase 4)
+
+```
+ EpisodeView ──► SENSE ──► THINK (LLM brain) ──► VALIDATE (hard rails)
+                                                    │
+                              approved ◄────────────┤── refused → safe fallback re-checked
+                                  ▼                        │ both refused ▼
+                                 ACT ──schedule────────────┴──► ABSTAIN
+   ACT: simulated outcome (eval/replay) or REAL Razorpay Payment Link (idempotency-keyed)
+```
+
+- **LLM proposes, rails dispose** — consent rules, touch budgets, ₹ thresholds and the
+  21-day horizon are unbreakable by construction
+- **Record-once-replay-forever** — every agent decision is journaled; replays are
+  byte-identical, so measured results are AI-driven AND deterministic
+- **Multi-seed honest claims** — the agent wins 18/20 seeded worlds (mean 4.12× baseline);
+  loss-worlds are documented, not tuned away
 
 ## Engineering principles
 
