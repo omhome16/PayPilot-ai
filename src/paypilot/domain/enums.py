@@ -29,6 +29,7 @@ class Intervention(StrEnum):
     RAIL_SWITCH = "rail_switch"  # move mandate to another rail
     VOICE_NUDGE = "voice_nudge"  # Hinglish voice call
     HUMAN_ESCALATION = "human_escalation"  # hand off to merchant ops
+    WAIT_SELF_HEAL = "wait_self_heal"  # strategic patience: schedule ONE later check-in (DR9)
 
 
 class FailureMode(StrEnum):
@@ -54,6 +55,7 @@ class FailureMode(StrEnum):
                         Intervention.PAYMENT_LINK,
                         Intervention.VOICE_NUDGE,
                         Intervention.HUMAN_ESCALATION,
+                        Intervention.WAIT_SELF_HEAL,  # DR9: patience for cash-crunch mode
                     }
                 )
             case FailureMode.AUTH_TIMEOUT | FailureMode.BANK_DOWNTIME:

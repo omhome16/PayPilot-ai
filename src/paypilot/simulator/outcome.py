@@ -68,6 +68,12 @@ _CELLS: dict[tuple[Intervention, FailureMode], _Cell] = {
     (Intervention.VOICE_NUDGE, FailureMode.MANDATE_REVOKED): _Cell(
         0.16, "assumption-v2: intrusive channel in win-back context"
     ),
+    # --- WAIT_SELF_HEAL (strategic patience: no contact, one later check-in) ------
+    # P(self-heal by salary day | reliable cash-crunch payer). Chargebee: "a Sunday-
+    # night retry on a card that clears every payday wastes a chance."
+    (Intervention.WAIT_SELF_HEAL, FailureMode.INSUFFICIENT_FUNDS): _Cell(
+        0.62, "derived-v2: majority of crunch failures self-resolve post-salary; no touch cost"
+    ),
     # --- HUMAN_ESCALATION (ops team takes over) -----------------------------------
     (Intervention.HUMAN_ESCALATION, FailureMode.INSUFFICIENT_FUNDS): _Cell(
         0.22, "assumption-v2: human negotiation beats automation per-touch, costs opex"
