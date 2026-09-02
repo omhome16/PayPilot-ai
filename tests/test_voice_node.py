@@ -58,3 +58,48 @@ def test_voice_node_rejects_unsafe_llm_script() -> None:
     call = node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
     # fell back to the safe template — no threats in the artifact
     assert "legal action" not in call.script_hinglish.lower()
+    assert call.source == "template"
+
+
+def test_salary_line_fires_only_near_payday() -> None:
+    """days_to_salary is computed from the episode calendar — the salary line is
+    no longer dead code: it appears near payday and never far from it."""
+    node = VoiceNode(merchant_name="FitZone")
+    near = node.make_call(_view(), "Priya", "https://rzp.io/rzp/a")  # failed 27 Sep → ~4d
+    assert "Salary bhi aa hi rahi hogi" in near.script_hinglish
+
+    far = EpisodeView(
+        subscription_id="sub_0001",
+        episode_no=1,
+        mode=FailureMode.INSUFFICIENT_FUNDS,
+        amount_paise=149_900,
+        first_failed_at=dt.datetime(2026, 9, 5, 5, 0, tzinfo=dt.UTC),  # 5 Sep → ~26d to payday
+        attempts_made=2,
+        rail=None,
+        billing_day=5,
+        vertical="gym",
+    )
+    far_call = node.make_call(far, "Priya", "https://rzp.io/rzp/b")
+    assert "Salary bhi aa hi rahi hogi" not in far_call.script_hinglish
+
+
+def test_strict_gate_drops_script_without_optout() -> None:
+    """The node enforces the FULL DR12 policy (opt-out + merchant ID) itself —
+    a writer that skips opt-out cannot ship a call artifact."""
+
+    class _NoOptOutWriter:
+        def write(self, ctx):
+            from paypilot.voice.script import CallScript
+
+            return CallScript(
+                text=(
+                    f"Namaste Priya ji! Main {ctx['merchant']} ki taraf se bol rahi hoon. "
+                    f"Aapka ₹1,499 ka payment pending hai. Link: {ctx['payment_url']}"
+                ),
+                source="llm",
+            )
+
+    node = VoiceNode(merchant_name="FitZone", writer=_NoOptOutWriter())
+    call = node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
+    assert call.source == "template"  # degraded to the always-safe script
+    assert "rok denge" in call.script_hinglish or "pause" in call.script_hinglish

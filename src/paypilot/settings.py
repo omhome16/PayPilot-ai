@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     env: str = "dev"
     log_level: str = "INFO"
+    merchant_name: str = "PayPilot"  # spoken in voice scripts; validated for ID enforcement
 
     # --- LLM narration layer (Phase 3): entirely optional -----------------------
     openrouter_api_key: SecretStr | None = None

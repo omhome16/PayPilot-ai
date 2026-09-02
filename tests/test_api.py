@@ -116,3 +116,21 @@ def test_zero_amount_maps_to_422() -> None:
     payload["payload"]["payment"]["entity"]["amount"] = 0
     r = _post(_client(), payload)
     assert r.status_code == 422
+
+
+def test_voice_decision_returns_safe_call_artifact() -> None:
+    """Big-ticket, thrice-failed insufficient-funds → VOICE_NUDGE → the response
+    carries a generated Hinglish call script with the mandatory opt-out."""
+    payload = _failure_payload(attempt_no=3)
+    payload["payload"]["payment"]["entity"]["amount"] = 150_000
+    r = _post(_client(), payload)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["action"] == "voice_nudge"
+    vc = data["voice_call"]
+    assert vc["source"] == "template"  # no OPENROUTER key in test settings
+    assert vc["audio_path"] is None
+    assert vc["estimated_duration_seconds"] > 0
+    low = vc["script"].lower()
+    assert "rok denge" in low or "pause" in low
+    assert "₹1,500" in vc["script"]

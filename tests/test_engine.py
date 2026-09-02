@@ -169,3 +169,44 @@ def test_engine_counts_compliance_violations() -> None:
     expected = sum(1 for e in events if e.mode in illegal_modes)
     assert result.compliance_violations == expected >= 1
     assert sum(1 for t in result.timeline if t.kind == "violation") == expected
+
+
+def test_engine_executes_voice_decisions_as_safe_call_artifacts() -> None:
+    """A VOICE_NUDGE decision becomes a real VoiceCall artifact + a 'voice' timeline
+    entry; runs stay byte-identical (artifact timestamps live outside RunResult)."""
+
+    class _VoiceForFunds:
+        """High-value insufficient-funds episodes get the personal channel."""
+
+        name = "voice-funds"
+
+        def next_action(self, ep: EpisodeView) -> ProposedAction | None:
+            if ep.mode is FailureMode.INSUFFICIENT_FUNDS and ep.amount_paise >= 100_000:
+                return ProposedAction(
+                    intervention=Intervention.VOICE_NUDGE,
+                    run_at=ep.first_failed_at + timedelta(days=1),
+                )
+            return None
+
+    from paypilot.voice.node import VoiceNode
+
+    pop, events = _september_events()
+    w = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
+    voice = VoiceNode(merchant_name="PayPilot")
+    result = RunEngine(pop, window=w, voice_node=voice).run(_VoiceForFunds(), events)
+
+    voice_decisions = sum(
+        1 for t in result.timeline if t.kind == "action" and "voice_nudge" in t.detail
+    )
+    voice_calls_made = len(voice.calls)
+    assert voice_calls_made >= 1
+    assert len([t for t in result.timeline if t.kind == "voice"]) == voice_calls_made
+    assert voice_decisions >= 1
+    artifact = voice.calls[0]
+    assert artifact.source == "template"
+    assert "rok denge" in artifact.script_hinglish or "pause" in artifact.script_hinglish
+
+    # determinism: identical seed → identical RunResult (voice timeline included)
+    r1 = RunEngine(pop, window=w, seed=7).run(_VoiceForFunds(), events)
+    r2 = RunEngine(pop, window=w, seed=7).run(_VoiceForFunds(), events)
+    assert r1 == r2

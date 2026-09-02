@@ -32,7 +32,7 @@ Phases 0–4 complete (see `learning/` journal for the full build narrative).
 | 2 | Fair-naive baseline arm + RunEngine referee — **benchmark: 26.7% episodes, ₹8,317** | ✅ |
 | 3 | Agent core + head-to-head — **5.6× baseline rupees, zero violations** | ✅ |
 | 4 | Agentic graph: LLM brain behind guardrails · record/replay · live Payment Links · 20-world stability (**85% win-rate, mean 2.42×**) | ✅ |
-| 5 | Hinglish voice module | ✅ scripts + safety validator + VoiceNode artifacts (telephony pluggable later) |
+| 5 | Hinglish voice module | ✅ wired: `VOICE_NUDGE` decisions execute as safety-validated `VoiceCall` artifacts (engine + webhook API); telephony pluggable later |
 | 6 | Eval harness + measured report | ✅ `EVAL_REPORT.md` — 20 worlds, 85% win-rate, 2.42× mean, measured zero violations |
 | 7 | Dashboard | ✅ `DASHBOARD.html` — monochrome glassmorphism, pre-rendered static, real run data |
 | 8 | Pitch video + submission | 🎬 script ready (`PITCH_SCRIPT.md`); honesty doc `LIMITATIONS.md` done |
@@ -51,6 +51,10 @@ Phases 0–4 complete (see `learning/` journal for the full build narrative).
 
 - **LLM proposes, rails dispose** — consent rules, touch budgets, ₹ thresholds and the
   21-day horizon are unbreakable by construction
+- **Voice executes for real** — an approved `VOICE_NUDGE` becomes a strictly-validated
+  Hinglish `VoiceCall` artifact (template or LLM script, opt-out enforced), both in the
+  engine and at the webhook; the scripted doctrine reserves calls (low-EV per attempt),
+  so the dashboard shows 0 by discipline, not by absence
 - **Record-once-replay-forever** — every agent decision is journaled; replays are
   byte-identical, so measured results are AI-driven AND deterministic
 - **Multi-seed honest claims** — the agent wins 17/20 seeded worlds (mean 2.42× baseline);
@@ -80,6 +84,7 @@ Regenerate the measured artifacts (deterministic, seeded):
 ```bash
 uv run paypilot-eval         # re-runs the 20-world sweep → EVAL_REPORT.md
 uv run paypilot-dashboard    # re-runs the sweep → DASHBOARD.html
+uv run paypilot-live-eval    # OPTIONAL: real OpenRouter brain vs baseline + doctrine (needs OPENROUTER_API_KEY)
 ```
 
 Run the webhook receiver (signed `payment.failed` in → recovery decision out):

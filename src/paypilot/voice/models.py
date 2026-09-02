@@ -15,6 +15,7 @@ class VoiceCall(BaseModel):
     merchant_name: str
     customer_name: str
     script_hinglish: str = Field(min_length=20)  # rejects empty/whitespace
+    source: str = "template"  # "template" | "llm"
     audio_path: str | None  # None until a TTS backend renders it
     created_at: dt.datetime
     words_per_second: float = Field(default=2.5, gt=0)  # natural Hinglish pace

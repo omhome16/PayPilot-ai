@@ -15,6 +15,7 @@ from paypilot.graph.policy_adapter import GraphPolicy
 from paypilot.simulator.failure_gen import FailureGenSpec, generate_failures
 from paypilot.simulator.population import PopulationSpec, generate_population
 from paypilot.simulator.window import WindowSpec
+from paypilot.voice.node import VoiceNode
 
 _WINDOW = WindowSpec(start=dt.date(2026, 9, 1), end=dt.date(2026, 9, 30))
 
@@ -22,6 +23,7 @@ _KIND_LABEL = {
     "action": "action",
     "success": "recovered ✓",
     "fail": "attempt failed",
+    "voice": "voice call ✓",
     "give_up": "gave up",
     "abandon_window": "window closed",
     "clamp": "quiet-hours clamp",
@@ -63,7 +65,9 @@ def build_dashboard_data(
     pop = generate_population(PopulationSpec(size=min(stability_size, 120), seed=focus_seed))
     events = generate_failures(pop, FailureGenSpec(window=_WINDOW, seed=focus_seed))
     gp = GraphPolicy(brain=FakeBrain(fn=scripted_strategist))
-    run = RunEngine(pop, window=_WINDOW).run(gp, events)
+    voice = VoiceNode(merchant_name="PayPilot")  # VOICE_NUDGE decisions become real artifacts
+    run = RunEngine(pop, window=_WINDOW, voice_node=voice).run(gp, events)
+    voice_calls = len(voice.calls)
 
     mix_counter: dict[str, int] = {}
     for e in gp.journal:
@@ -85,6 +89,7 @@ def build_dashboard_data(
             "at_risk_rupees": round(run.at_risk_paise / 100),
             "episodes_recovered": run.recovered_episodes,
             "episodes_total": len({(e.subscription_id, e.episode_no) for e in events}),
+            "voice_calls": voice_calls,
             "action_mix": mix_counter,
             "episode_timelines": _focus_timelines(gp, run.timeline),
         },
