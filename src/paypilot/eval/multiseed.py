@@ -102,7 +102,7 @@ def run_multi_seed(seeds: list[int], size: int = 300) -> list[SeedOutcome]:
         outcomes.append(
             SeedOutcome(
                 seed=seed,
-                episodes=len(events),
+                episodes=len({(e.subscription_id, e.episode_no) for e in events}),
                 at_risk_paise=base.at_risk_paise,
                 baseline_paise=base.recovered_paise,
                 agent_paise=agent.recovered_paise,

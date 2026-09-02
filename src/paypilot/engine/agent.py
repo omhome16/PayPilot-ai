@@ -32,6 +32,7 @@ from paypilot.settings import Settings
 
 _IST = dt.timedelta(hours=5, minutes=30)
 _PROMPT_VERSION = "v1"
+HARD_STOP_DAYS = 21  # single source of truth for the recovery-horizon rail
 
 
 class LadderStep(IntEnum):
@@ -46,7 +47,7 @@ class Appetite:
 
     max_customer_touches: int = 3
     human_threshold_paise: int = 100_000  # humans only ≥ ₹1,000 (cost-aware ops)
-    hard_stop_days: int = 21
+    hard_stop_days: int = HARD_STOP_DAYS
 
 
 STANDARD = Appetite()

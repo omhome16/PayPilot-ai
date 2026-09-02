@@ -11,6 +11,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from paypilot.domain.enums import Intervention
+from paypilot.engine.agent import HARD_STOP_DAYS
 from paypilot.engine.policy import EpisodeView
 from paypilot.graph.brain import Brain, BrainProposal, FakeBrain
 from paypilot.graph.guardrails import (
@@ -83,7 +84,7 @@ def _never() -> BrainProposal:
 def build_recovery_graph(
     brain: Brain | None = None,
     guardrails: Guardrails | None = None,
-    hard_stop_days: int = 21,
+    hard_stop_days: int = HARD_STOP_DAYS,
     pop: Any | None = None,  # Population; profiles ride inside EpisodeView
 ) -> Any:
     """Compile SENSE→THINK→VALIDATE→ACT/ABSTAIN into a LangGraph StateGraph."""

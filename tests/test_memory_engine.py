@@ -8,6 +8,7 @@ from paypilot.engine.runner import RunEngine
 from paypilot.graph.brain import BrainProposal, FakeBrain
 from paypilot.graph.policy_adapter import GraphPolicy
 from paypilot.simulator.failure_gen import FailureGenSpec, generate_failures
+from paypilot.simulator.outcome import OutcomeModel
 from paypilot.simulator.population import PopulationSpec, generate_population
 from paypilot.simulator.window import WindowSpec
 
@@ -36,6 +37,43 @@ def test_engine_passes_profiles_to_policies() -> None:
     # one consult per EPISODE (events can repeat within an episode), all with memory
     assert len(seen) == len(episodes_seen) >= 1
     assert all(p is not None for p in seen)
+
+
+def test_graph_policy_sense_exposes_history_to_brains() -> None:
+    """P4.5 wiring: the adapter's SENSE must carry profile history to ANY brain —
+    scripted, LLM, or replay all read the same state dict."""
+    pop, w, events = _world()
+    states: list[dict] = []
+
+    def _capture(state):
+        states.append(state)
+        return BrainProposal(action=Intervention.PAYMENT_LINK, days_ahead=1)
+
+    gp = GraphPolicy(brain=FakeBrain(fn=_capture))
+    RunEngine(pop, window=w).run(gp, events)
+    assert states
+    assert all(s.get("history") for s in states)
+    assert all("on_time_ratio" in s["history"] and s.get("history_note") for s in states)
+
+
+def test_engine_passes_profiles_to_the_outcome_model() -> None:
+    """P4.5 wiring: outcome draws are personalized by the profile (engine-level)."""
+    pop, w, events = _world()
+    seen: list[object] = []
+
+    class _RecordingModel(OutcomeModel):
+        def draw(self, intervention, mode, *, attempt_no=1, days_to_salary=None, profile=None):
+            seen.append(profile)
+            return super().draw(
+                intervention,
+                mode,
+                attempt_no=attempt_no,
+                days_to_salary=days_to_salary,
+                profile=profile,
+            )
+
+    RunEngine(pop, window=w).run(NaiveRetryPolicy(), events, outcome_model=_RecordingModel(seed=7))
+    assert seen and all(p is not None for p in seen)
 
 
 def test_history_aware_doctrine_beats_baseline_across_worlds() -> None:

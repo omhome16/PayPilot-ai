@@ -48,7 +48,12 @@ def build_report(
 ) -> EvalReport:
     if not outcomes:
         raise ValueError("no worlds to report on")
-    mults = [o.agent_paise / max(o.baseline_paise, 1) for o in outcomes]
+    # A zero-₹ baseline makes the multiplier undefined (∞) — show it honestly,
+    # exclude it from aggregate statistics, never fake a huge finite number.
+    mults = [
+        o.agent_paise / o.baseline_paise if o.baseline_paise > 0 else float("inf") for o in outcomes
+    ]
+    finite = [m for m in mults if m != float("inf")]
     agent_shares = [o.agent_paise / o.at_risk_paise for o in outcomes]
     base_shares = [o.baseline_paise / o.at_risk_paise for o in outcomes]
     wins = sum(1 for o in outcomes if o.agent_paise > o.baseline_paise)
@@ -73,10 +78,10 @@ def build_report(
     return EvalReport(
         worlds=len(outcomes),
         win_rate=wins / len(outcomes),
-        mean_multiplier=statistics.mean(mults),
-        median_multiplier=statistics.median(mults),
-        min_multiplier=min(mults),
-        max_multiplier=max(mults),
+        mean_multiplier=statistics.mean(finite) if finite else float("inf"),
+        median_multiplier=statistics.median(finite) if finite else float("inf"),
+        min_multiplier=min(finite) if finite else float("inf"),
+        max_multiplier=max(finite) if finite else float("inf"),
         mean_agent_share=statistics.mean(agent_shares),
         mean_baseline_share=statistics.mean(base_shares),
         total_violations=sum(o.agent_violations + o.baseline_violations for o in outcomes),
@@ -121,10 +126,11 @@ def render_markdown(rep: EvalReport) -> str:
     lines.append("| world | episodes | at-risk ₹ | baseline ₹ | agent ₹ | multiplier |")
     lines.append("|---|---|---|---|---|---|")
     for o in rep.per_world:
-        m = o.agent_paise / max(o.baseline_paise, 1)
+        m = o.agent_paise / o.baseline_paise if o.baseline_paise > 0 else float("inf")
+        shown = f"{m:.2f}×" if m != float("inf") else "∞"
         lines.append(
             f"| {o.seed} | {o.episodes} | {o.at_risk_paise / 100:,.0f} "
-            f"| {o.baseline_paise / 100:,.0f} | {o.agent_paise / 100:,.0f} | {m:.2f}× |"
+            f"| {o.baseline_paise / 100:,.0f} | {o.agent_paise / 100:,.0f} | {shown} |"
         )
     lines.append("")
     lines.append("## Caveats (read before quoting any number)")
@@ -150,3 +156,14 @@ def generate_report(
     if out_path is not None:
         save_report(rep, out_path)
     return rep
+
+
+def main() -> None:
+    """CLI (``paypilot-eval``): regenerate EVAL_REPORT.md from the 20-world sweep."""
+    seeds = list(range(1, 21))
+    rep = generate_report(seeds=seeds, size=300, out_path=Path("EVAL_REPORT.md"))
+    print(render_markdown(rep))
+
+
+if __name__ == "__main__":
+    main()

@@ -93,10 +93,15 @@ class RunEngine:
         self._window = window
         self._seed = seed
 
-    def run(self, policy: Policy, events: tuple[FailureEvent, ...]) -> RunResult:
+    def run(
+        self,
+        policy: Policy,
+        events: tuple[FailureEvent, ...],
+        outcome_model: OutcomeModel | None = None,
+    ) -> RunResult:
         # Note: the engine draws NO random numbers of its own. All stochasticity flows
         # through OutcomeModel(seed), so identical seeds give byte-identical runs.
-        model = OutcomeModel(seed=self._seed)
+        model = outcome_model or OutcomeModel(seed=self._seed)
         cal = IndianPaymentCalendar.with_default_festivals(year=self._window.start.year)
         horizon = self._window.end + dt.timedelta(days=_GRACE_DAYS)
 
@@ -110,7 +115,6 @@ class RunEngine:
         recovered_paise = 0
         recovered_episodes = 0
         attempts_executed = 0
-        violations = 0
 
         for sub_id, ep_no in episodes:
             first_at = first_failure_at[(sub_id, ep_no)]
@@ -172,11 +176,14 @@ class RunEngine:
                 )
             )
 
+            # P4.5: past behavior personalizes the draw (both arms get profiles — fair)
+            profile = self._profile_by_customer.get(self._subs_by_id[sub_id].customer_id)
             success = model.draw(
                 proposal.intervention,
                 st.mode,
                 attempt_no=attempt_no,
                 days_to_salary=days_to_salary,
+                profile=profile,
             )
             if success:
                 st.recovered = True
@@ -201,7 +208,7 @@ class RunEngine:
             recovered_paise=recovered_paise,
             recovered_episodes=recovered_episodes,
             attempts_executed=attempts_executed,
-            compliance_violations=violations,
+            compliance_violations=sum(1 for t in timeline if t.kind == "violation"),
             timeline=tuple(timeline),
         )
 

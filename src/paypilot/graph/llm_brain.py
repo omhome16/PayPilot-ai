@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from paypilot.domain.enums import FailureMode, Intervention
+from paypilot.domain.enums import Intervention
 from paypilot.graph.brain import BrainProposal
 
 PROMPT_GRAPH_V1 = """You are PayPilot's recovery strategist for Indian subscription payments.
@@ -118,14 +118,8 @@ class OpenRouterBrain:
             action = _ALLOWED.get(action_raw)
             if action is None:
                 return None
-            mode_hint = str(d.get("mode", ""))
-            known_mode = mode_hint in {m.value for m in FailureMode}
-            if (
-                mode_hint
-                and known_mode
-                and action not in FailureMode(mode_hint).permitted_interventions
-            ):
-                return None  # brain proposed an illegal move → guardrails will fallback
+            # Mode legality is NOT checked here — that is the guardrails' job (R1).
+            # Pre-filtering would burn a repair round; the rails dispose either way.
             return BrainProposal(
                 action=action,
                 on_salary_day=bool(d.get("on_salary_day", False)),

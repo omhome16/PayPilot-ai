@@ -100,6 +100,28 @@ def test_guardrails_require_threshold_for_humans() -> None:
     assert big.approved is True
 
 
+def test_guardrail_fallback_is_itself_legal_for_the_mode() -> None:
+    """Big-ticket AUTH_TIMEOUT: voice is NOT permitted there, so the safe fallback
+    must be a permitted intervention — otherwise the loop dead-ends into abstain."""
+    g: Guardrails = StandardGuardrails()
+    illegal = BrainProposal(action=Intervention.PAYMENT_LINK, days_ahead=1)
+    report = g.check(_view(mode=FailureMode.AUTH_TIMEOUT, amount_paise=150_000), illegal)
+    assert report.approved is False
+    assert report.fallback is not None
+    fb = report.fallback
+    assert fb.action in FailureMode.AUTH_TIMEOUT.permitted_interventions
+    # the adapter re-validates every fallback — it must pass
+    assert g.check(_view(mode=FailureMode.AUTH_TIMEOUT, amount_paise=150_000), fb).approved
+
+
+def test_big_transient_episode_with_illegal_proposal_still_acts() -> None:
+    brain = FakeBrain(default_action=Intervention.PAYMENT_LINK)  # illegal for AUTH_TIMEOUT
+    gp = GraphPolicy(brain=brain)
+    act = gp.next_action(_view(mode=FailureMode.AUTH_TIMEOUT, amount_paise=150_000))
+    assert act is not None
+    assert act.intervention in FailureMode.AUTH_TIMEOUT.permitted_interventions
+
+
 # --- The Policy adapter (graph ⇄ engine socket) -------------------------------------
 
 

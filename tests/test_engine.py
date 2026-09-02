@@ -1,6 +1,6 @@
 """Phase 2 contracts: any policy plugs into the same engine; baseline stays fair."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from paypilot.domain.enums import FailureMode, Intervention, MandateRail
 from paypilot.engine.naive import NaiveRetryPolicy
@@ -139,3 +139,33 @@ def test_engine_clamps_illegal_hour_proposals() -> None:
     result = RunEngine(pop, window=w).run(_OnceThenStop(), events)
     clamps = [t for t in result.timeline if t.kind == "clamp"]
     assert clamps, "expected at least one quiet-hours clamp"
+
+
+def test_engine_counts_compliance_violations() -> None:
+    """A policy proposing an illegal move earns ONE violation entry, the episode
+    closes (no retry loop), and the metric actually counts it — the headline
+    'zero violations' claim is measured, not hardwired."""
+
+    class _RetryEverything:
+        """RETRY everywhere: legal for transient modes, ILLEGAL for the rest."""
+
+        name = "retry-everything"
+
+        def next_action(self, ep: EpisodeView) -> ProposedAction | None:
+            return ProposedAction(
+                intervention=Intervention.RETRY,
+                run_at=ep.first_failed_at + timedelta(days=1),
+            )
+
+    pop, events = _september_events()
+    w = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
+    result = RunEngine(pop, window=w).run(_RetryEverything(), events)
+
+    illegal_modes = {
+        FailureMode.INSUFFICIENT_FUNDS,
+        FailureMode.MANDATE_REVOKED,
+        FailureMode.LIMIT_EXCEEDED,
+    }
+    expected = sum(1 for e in events if e.mode in illegal_modes)
+    assert result.compliance_violations == expected >= 1
+    assert sum(1 for t in result.timeline if t.kind == "violation") == expected

@@ -31,11 +31,12 @@ Phases 0–4 complete (see `learning/` journal for the full build narrative).
 | 1 | Synthetic corpus + calibrated failure simulator | ✅ |
 | 2 | Fair-naive baseline arm + RunEngine referee — **benchmark: 26.7% episodes, ₹8,317** | ✅ |
 | 3 | Agent core + head-to-head — **5.6× baseline rupees, zero violations** | ✅ |
-| 4 | Agentic graph: LLM brain behind guardrails · record/replay · live Payment Links · 20-world stability (**90% win-rate, mean 4.12×**) | ✅ |
+| 4 | Agentic graph: LLM brain behind guardrails · record/replay · live Payment Links · 20-world stability (**85% win-rate, mean 2.42×**) | ✅ |
 | 5 | Hinglish voice module | ✅ scripts + safety validator + VoiceNode artifacts (telephony pluggable later) |
-| 6 | Eval harness + measured report | ✅ `EVAL_REPORT.md` — 20 worlds, 90% win-rate, 4.12× mean, zero violations |
+| 6 | Eval harness + measured report | ✅ `EVAL_REPORT.md` — 20 worlds, 85% win-rate, 2.42× mean, measured zero violations |
 | 7 | Dashboard | ✅ `DASHBOARD.html` — monochrome glassmorphism, pre-rendered static, real run data |
 | 8 | Pitch video + submission | 🎬 script ready (`PITCH_SCRIPT.md`); honesty doc `LIMITATIONS.md` done |
+| 9 | Signed webhook receiver | ✅ `POST /webhooks/razorpay` — HMAC-verified `payment.failed` → agent decision |
 
 ## Architecture (Phase 4)
 
@@ -52,7 +53,7 @@ Phases 0–4 complete (see `learning/` journal for the full build narrative).
   21-day horizon are unbreakable by construction
 - **Record-once-replay-forever** — every agent decision is journaled; replays are
   byte-identical, so measured results are AI-driven AND deterministic
-- **Multi-seed honest claims** — the agent wins 18/20 seeded worlds (mean 4.12× baseline);
+- **Multi-seed honest claims** — the agent wins 17/20 seeded worlds (mean 2.42× baseline);
   loss-worlds are documented, not tuned away
 
 ## Engineering principles
@@ -72,6 +73,19 @@ cp .env.example .env         # then paste your TEST-mode keys
 uv run pytest                # tests
 uv run ruff check .          # lint
 uv run mypy src              # types
+```
+
+Regenerate the measured artifacts (deterministic, seeded):
+
+```bash
+uv run paypilot-eval         # re-runs the 20-world sweep → EVAL_REPORT.md
+uv run paypilot-dashboard    # re-runs the sweep → DASHBOARD.html
+```
+
+Run the webhook receiver (signed `payment.failed` in → recovery decision out):
+
+```bash
+uv run uvicorn paypilot.api.app:create_app --factory --port 8000
 ```
 
 > ⚠️ Test-mode keys only. `.env` is gitignored and must never be committed.

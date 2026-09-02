@@ -28,6 +28,10 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.scripts]
+paypilot-eval = "paypilot.eval.report:main"
+paypilot-dashboard = "paypilot.dashboard.render:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/paypilot"]
 

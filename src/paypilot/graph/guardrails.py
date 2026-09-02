@@ -69,10 +69,18 @@ class StandardGuardrails:
         if mode in (FailureMode.MANDATE_REVOKED, FailureMode.LIMIT_EXCEEDED):
             return _link_fallback()
         if big:
+            # the fallback must itself be LEGAL for the mode: voice only where permitted,
+            # ops handoff everywhere (HUMAN_ESCALATION is in every permission set)
+            if Intervention.VOICE_NUDGE in mode.permitted_interventions:
+                return BrainProposal(
+                    action=Intervention.VOICE_NUDGE,
+                    days_ahead=2,
+                    reason="guardrail fallback: voice for high-value",
+                )
             return BrainProposal(
-                action=Intervention.VOICE_NUDGE,
+                action=Intervention.HUMAN_ESCALATION,
                 days_ahead=2,
-                reason="guardrail fallback: voice for high-value",
+                reason="guardrail fallback: ops handoff for high-value",
             )
         return _salary_timed()
 

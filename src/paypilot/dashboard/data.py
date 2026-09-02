@@ -34,7 +34,11 @@ def build_dashboard_data(
     focus_seed: int = 42,
 ) -> dict[str, Any]:
     outcomes = run_multi_seed(seeds=stability_seeds, size=stability_size)
-    mults = [o.agent_paise / max(o.baseline_paise, 1) for o in outcomes]
+    mults = [
+        o.agent_paise / o.baseline_paise if o.baseline_paise > 0 else float("inf") for o in outcomes
+    ]
+    finite = [m for m in mults if m != float("inf")]
+    mean_mult = sum(finite) / len(finite) if finite else float("inf")
     wins = sum(1 for o in outcomes if o.agent_paise > o.baseline_paise)
     agent_share = sum(o.agent_paise / o.at_risk_paise for o in outcomes) / len(outcomes)
     base_share = sum(o.baseline_paise / o.at_risk_paise for o in outcomes) / len(outcomes)
@@ -45,7 +49,9 @@ def build_dashboard_data(
                 "seed": o.seed,
                 "baseline_rupees": round(o.baseline_paise / 100),
                 "agent_rupees": round(o.agent_paise / 100),
-                "multiplier": round(o.agent_paise / max(o.baseline_paise, 1), 2),
+                "multiplier": (
+                    round(o.agent_paise / o.baseline_paise, 2) if o.baseline_paise > 0 else "∞"
+                ),
                 "win": o.agent_paise > o.baseline_paise,
             }
             for o in outcomes
@@ -67,7 +73,7 @@ def build_dashboard_data(
     return {
         "headline": {
             "win_rate": f"{wins / len(outcomes):.0%}",
-            "mean_multiplier": f"{sum(mults) / len(mults):.2f}×",
+            "mean_multiplier": f"{mean_mult:.2f}×",
             "agent_share": f"{agent_share:.1%}",
             "baseline_share": f"{base_share:.1%}",
             "violations": str(run.compliance_violations),
@@ -78,7 +84,7 @@ def build_dashboard_data(
             "recovered_rupees": round(run.recovered_paise / 100),
             "at_risk_rupees": round(run.at_risk_paise / 100),
             "episodes_recovered": run.recovered_episodes,
-            "episodes_total": len(events),
+            "episodes_total": len({(e.subscription_id, e.episode_no) for e in events}),
             "action_mix": mix_counter,
             "episode_timelines": _focus_timelines(gp, run.timeline),
         },

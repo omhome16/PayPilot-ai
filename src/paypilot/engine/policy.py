@@ -24,7 +24,7 @@ class EpisodeView:
     mode: FailureMode
     amount_paise: int
     first_failed_at: datetime  # UTC
-    attempts_made: int  # failed attempts so far in this episode (0 = fresh episode)
+    attempts_made: int  # failed attempts so far (the opening failure = 1)
     rail: MandateRail
     billing_day: int  # day-of-month the debit normally fires
     vertical: str

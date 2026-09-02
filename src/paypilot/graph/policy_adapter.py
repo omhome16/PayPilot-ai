@@ -5,13 +5,14 @@ guardrails dispose; every decision and override is journaled for record/replay.
 """
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from paypilot.domain.calendar import IndianPaymentCalendar
 from paypilot.domain.enums import Intervention
+from paypilot.engine.agent import HARD_STOP_DAYS
 from paypilot.engine.policy import EpisodeView, ProposedAction
-from paypilot.graph.brain import Brain, BrainProposal, FakeBrain
+from paypilot.graph.brain import Brain, BrainProposal, BrainState, FakeBrain
 from paypilot.graph.guardrails import (
     GuardrailReport,
     Guardrails,
@@ -48,10 +49,12 @@ class GraphPolicy:
         brain: Brain | None = None,
         guardrails: Guardrails | None = None,
         wait_budget_per_episode: int = 1,
+        hard_stop_days: int = HARD_STOP_DAYS,
     ) -> None:
         self.brain: Brain = brain or FakeBrain()
         self.guardrails: Guardrails = guardrails or StandardGuardrails()
         self.wait_budget = wait_budget_per_episode
+        self.hard_stop_days = hard_stop_days
         self.wait_used: dict[str, bool] = {}
         self._consult_seq: dict[str, int] = {}  # per-episode consult counter
         self.override_log: list[GuardrailReport] = []
@@ -71,7 +74,7 @@ class GraphPolicy:
         proposal = self.brain.propose(state)
 
         # Replay may carry an explicit abstention recorded earlier
-        if getattr(proposal, "abstain", False):
+        if proposal.abstain:
             self._journal(
                 key,
                 proposal,
@@ -98,7 +101,7 @@ class GraphPolicy:
         if proposal.action is Intervention.WAIT_SELF_HEAL:
             self.wait_used[key] = True
         when = proposal_run_at(proposal, episode)
-        limit = episode.first_failed_at + dt.timedelta(days=21)
+        limit = episode.first_failed_at + dt.timedelta(days=self.hard_stop_days)
         if when > limit:
             # Journal the abstention so replays align consult-for-consult
             self._journal(
@@ -174,7 +177,28 @@ class GraphPolicy:
         key = f"{ep.subscription_id}:{ep.episode_no}"
         ist_date = (ep.first_failed_at + _IST).date()
         days_to_salary = (_next_salary(ist_date) - ist_date).days
-        state = BrainStateData(
+        history_note = ""
+        history: dict[str, Any] | None = None
+        if ep.profile is not None:
+            ratio = round(ep.profile.on_time_ratio, 2)
+            tone = (
+                "reliable payer"
+                if ratio >= 0.8
+                else "mixed record"
+                if ratio >= 0.5
+                else "history of misses"
+            )
+            history_note = (
+                f"history: {tone} "
+                f"({int(ep.profile.paid_on_time)}/{ep.profile.tenure_cycles} on time)"
+            )
+            history = {
+                "tenure_cycles": ep.profile.tenure_cycles,
+                "on_time_ratio": ratio,
+                "missed_cycles": ep.profile.missed_cycles,
+                "link_affinity": round(ep.profile.link_affinity, 2),
+            }
+        state = BrainState(
             mode=str(ep.mode),
             amount_rupees=round(ep.amount_paise / 100, 2),
             attempts=ep.attempts_made,
@@ -183,25 +207,13 @@ class GraphPolicy:
             rail=str(ep.rail),
             vertical=ep.vertical,
             days_to_salary=days_to_salary,
+            history_note=history_note,
         )
-        return {
+        out: dict[str, Any] = {
             "episode_key": key,
             "consult_seq": self._consult_seq.get(key, 1),
-            **state.__dict__,
+            **asdict(state),
         }  # plain JSON-friendly dict for the LLM/replay path
-
-
-# Imported late to avoid a cycle in docs; simple data holder:
-from dataclasses import dataclass as _dc  # noqa: E402
-
-
-@_dc(frozen=True)
-class BrainStateData:
-    mode: str
-    amount_rupees: float
-    attempts: int
-    touches_used: int
-    wait_already_used: bool
-    rail: str
-    vertical: str
-    days_to_salary: int
+        if history is not None:
+            out["history"] = history
+        return out

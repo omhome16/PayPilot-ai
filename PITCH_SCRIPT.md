@@ -71,16 +71,17 @@
 
 > "Now the part that matters — measured money. I ran both arms through twenty
 > calibrated worlds: same subscribers, same failures, only the brain differed.
-> The agent won ninety percent of the worlds. Mean recovery: four-point-one-two
-> times the naive baseline. Fifty-five percent of at-risk money recovered, versus
-> twenty-seven for blind retries. And I'll show you the two worlds it *lost* too —
+> The agent won eighty-five percent of the worlds. Mean recovery: two-point-four
+> times the naive baseline. Fifty-seven percent of at-risk money recovered, versus
+> thirty-one for blind retries. And I'll show you the three worlds it *lost* too —
 > because I didn't tune the strategy against the test. Every decision is recorded
 > and replayable, so these numbers are AI-driven *and* deterministic."
 
 ### 8 · Engineering (3:45–4:10)
 
-> "Under the hood: 141 tests, test-driven, strict mypy, ruff, CI on every push.
-> Payment links hit Razorpay's real test API with idempotency keys. Secrets are
+> "Under the hood: 153 tests, test-driven, strict mypy, ruff, CI on every push.
+> A signed webhook receiver turns a live payment.failed into a decision. Payment
+> links hit Razorpay's real test API with idempotency keys. Secrets are
 > structurally locked to test mode. Every assumption in the simulator is sourced
 > and documented."
 

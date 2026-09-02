@@ -204,3 +204,18 @@ zero compliance violations by construction · github.com/omhome16/PayPilot-ai</f
 def save_dashboard(data: dict[str, Any], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render_html(data), encoding="utf-8")
+
+
+def main() -> None:
+    """CLI (``paypilot-dashboard``): regenerate DASHBOARD.html from the 20-world sweep."""
+    from paypilot.dashboard.data import build_dashboard_data
+
+    seeds = list(range(1, 21))
+    data = build_dashboard_data(stability_seeds=seeds)
+    out_path = Path("DASHBOARD.html")
+    save_dashboard(data, out_path)
+    print(f"{out_path} written from {len(seeds)} seeded worlds")
+
+
+if __name__ == "__main__":
+    main()

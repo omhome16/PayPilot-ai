@@ -28,9 +28,11 @@ _LAWFUL_ABSTAIN = BrainProposal(
 
 
 def _abstain() -> BrainProposal:
-    p = BrainProposal(action=Intervention.SMART_RETRY, reason="replay: recorded abstention")
-    object.__setattr__(p, "abstain", True)
-    return p
+    return BrainProposal(
+        action=Intervention.SMART_RETRY,  # never used: abstain short-circuits first
+        reason="replay: recorded abstention",
+        abstain=True,
+    )
 
 
 class ReplayBrain:

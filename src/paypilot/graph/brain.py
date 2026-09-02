@@ -20,6 +20,7 @@ class BrainProposal:
     on_salary_day: bool = False  # time the action to the customer's next salary date
     reason: str = ""  # free-text justification (LLM narration lives here)
     raw: dict[str, Any] = field(default_factory=dict)  # untouched model output (audit)
+    abstain: bool = False  # replayed 'do nothing' consult (replay.py); never from a live brain
 
     @property
     def intervention(self) -> Intervention:
