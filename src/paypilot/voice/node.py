@@ -43,17 +43,21 @@ class VoiceNode:
         customer_name: str,
         payment_url: str,
     ) -> VoiceCall:
+        brief = self.brief(episode)
         ctx: dict[str, Any] = {
             "customer_name": customer_name,
             "merchant": self.merchant_name,
-            "amount_rupees": round(episode.amount_paise / 100, 2),
-            "mode": str(episode.mode),
-            "days_to_salary": self._days_to_salary(episode),
+            "amount_rupees": brief["amount_rupees"],
+            "mode": brief["mode"],
+            "days_to_salary": brief["days_to_salary"],
+            "on_time_ratio": brief["on_time_ratio"],
             "history_note": (
-                f"history: {ep_ratio(episode):.2f} on-time" if episode.profile is not None else ""
+                f"history: {brief['on_time_ratio']:.2f} on-time"
+                if brief["on_time_ratio"] is not None
+                else ""
             ),
             "payment_url": payment_url,
-            "attempt_no": episode.attempts_made + 1,
+            "attempt_no": brief["failed_attempts"],
         }
         script = self.writer.write(ctx)  # writers safety-gate internally
         report = validate_script(script.text, merchant_name=self.merchant_name)
@@ -72,16 +76,32 @@ class VoiceNode:
         self.calls.append(call)
         return call
 
+    def brief(self, episode: EpisodeView) -> dict[str, Any]:
+        """The data + strategy context behind one call — shown in UIs and APIs so
+        the demo can prove the script is driven by the customer's situation."""
+        days = self._days_to_salary(episode)
+        profile = episode.profile
+        if profile is None:
+            ratio: float | None = None
+            tone = "unknown"
+        else:
+            ratio = round(profile.on_time_ratio, 2)
+            tone = "reliable" if ratio >= 0.8 else "mixed" if ratio >= 0.5 else "history_of_misses"
+        return {
+            "mode": str(episode.mode),
+            "amount_rupees": round(episode.amount_paise / 100, 2),
+            "failed_attempts": episode.attempts_made,
+            "days_to_salary": days,
+            "on_time_ratio": ratio,
+            "history_tone": tone,
+        }
+
     @staticmethod
     def _days_to_salary(episode: EpisodeView) -> int:
         """Calendar-aware scripts: the salary line only fires when it's true."""
         ist_date = (episode.first_failed_at + _IST).date()
         cal = IndianPaymentCalendar.with_default_festivals(year=ist_date.year)
         return (cal.next_salary_date(ist_date) - ist_date).days
-
-
-def ep_ratio(ep: EpisodeView) -> float:
-    return float(ep.profile.on_time_ratio) if ep.profile is not None else 0.5
 
 
 def make_voice_node(

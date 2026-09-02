@@ -87,7 +87,9 @@ uv run paypilot-dashboard    # re-runs the sweep → DASHBOARD.html
 uv run paypilot-live-eval    # OPTIONAL: real OpenRouter brain vs baseline + doctrine (needs OPENROUTER_API_KEY)
 ```
 
-Run the webhook receiver (signed `payment.failed` in → recovery decision out):
+Run the webhook receiver — signed `payment.failed` in → recovery decision out — and open the
+live monitor at http://127.0.0.1:8000/monitor (one-click failure scenarios, strategy briefs,
+call scripts spoken aloud via browser speech synthesis):
 
 ```bash
 uv run uvicorn paypilot.api.app:create_app --factory --port 8000

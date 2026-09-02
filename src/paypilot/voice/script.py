@@ -67,7 +67,11 @@ def validate_script_safety(
 
 
 class TemplateScriptWriter:
-    """Deterministic Hinglish script — always available, always safe."""
+    """Deterministic Hinglish script — always available, always safe.
+
+    Context-aware: the opener acknowledges payment history, consent-broken modes
+    get a permission-first framing, and salary/attempt lines only fire when true.
+    """
 
     def write(self, ctx: dict[str, Any]) -> CallScript:
         name = str(ctx.get("customer_name", "ji")).split()[0]
@@ -76,20 +80,34 @@ class TemplateScriptWriter:
         amount_str = f"{amount:,.0f}"  # Indian-friendly grouping: 1,499
         url = str(ctx.get("payment_url", ""))
         days = ctx.get("days_to_salary")
-        salary_line = (
-            f"Salary bhi aa hi rahi hogi ({days} din mein), uske baad pay karna aasaan hoga. "
-            if isinstance(days, int) and 0 <= days <= 7
-            else ""
-        )
-        text = (
-            f"Namaste {name} ji! Main {merchant} ki taraf se bol rahi hoon. "
-            f"Aapka ₹{amount_str} ka payment pending dikha raha hai. "
-            f"{salary_line}"
-            f"Aap is link se bas do minute mein pay kar sakte hain: {url} "
+        mode = str(ctx.get("mode", ""))
+        attempt = int(ctx.get("attempt_no", 1))
+        ratio = ctx.get("on_time_ratio")  # None = no customer memory
+
+        lines = [f"Namaste {name} ji! Main {merchant} ki taraf se bol rahi hoon."]
+        # the data speaking: history-aware opener
+        if ratio is not None and ratio >= 0.8:
+            lines.append("Aap toh hamesha time pe pay karte hain — is baar shayad slip ho gaya.")
+        elif ratio is not None and ratio < 0.5:
+            lines.append("Koi baat nahi — hum aapke liye ek aasaan option lekar aaye hain.")
+        lines.append(f"Aapka ₹{amount_str} ka payment pending dikha raha hai.")
+        if mode == "mandate_revoked":
+            lines.append(
+                "Aapki permission ke bina hum kuch nahi kaat sakte — "
+                "pehle permission, phir payment."
+            )
+        if isinstance(days, int) and 0 <= days <= 7:
+            lines.append(
+                f"Salary bhi aa hi rahi hogi ({days} din mein), uske baad pay karna aasaan hoga."
+            )
+        elif attempt >= 2:
+            lines.append("Humne aapko pehle bhi remind kiya tha — is baar link ek click mein hai.")
+        lines.append(f"Aap is link se bas do minute mein pay kar sakte hain: {url}")
+        lines.append(
             "Aur agar aap ye subscription aage nahi chalana chahte, toh humein bata dijiye — "
             "hum ise rok denge ya pause kar denge. Dhanyavaad!"
         )
-        script = CallScript(text=text, source="template")
+        script = CallScript(text=" ".join(lines), source="template")
         validate_script_safety(script, require_amount=True, require_link=bool(url))
         return script
 

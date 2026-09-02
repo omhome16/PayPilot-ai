@@ -134,3 +134,46 @@ def test_voice_decision_returns_safe_call_artifact() -> None:
     low = vc["script"].lower()
     assert "rok denge" in low or "pause" in low
     assert "₹1,500" in vc["script"]
+    strategy = vc["strategy"]
+    assert strategy["failed_attempts"] == 3
+    assert strategy["days_to_salary"] == 3  # 2026-08-29 IST → Sep 1 salary
+    assert strategy["safety"]["ok"] is True and strategy["safety"]["violations"] == []
+
+
+def test_monitor_page_renders() -> None:
+    r = _client().get("/monitor")
+    assert r.status_code == 200
+    assert "Live Recovery Monitor" in r.text
+    assert "monitor/simulate" in r.text
+
+
+def test_monitor_simulate_scenarios_drive_the_agent() -> None:
+    c = _client()
+    expected = {"fresh_funds": "smart_retry", "revoked": "payment_link", "voice": "voice_nudge"}
+    for scenario, action in expected.items():
+        r = c.post(
+            "/monitor/simulate",
+            content=json.dumps({"scenario": scenario}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert r.status_code == 200, scenario
+        assert r.json()["action"] == action, scenario
+
+    data = c.get("/monitor/data").json()
+    actions = [e["action"] for e in data["events"]]
+    for action in expected.values():
+        assert action in actions
+    counters = data["counters"]
+    assert counters["events"] >= 3 and counters["voice_nudge"] >= 1
+    voice_event = next(e for e in data["events"] if e["action"] == "voice_nudge")
+    assert voice_event["voice"]["script"]
+    assert voice_event["voice"]["strategy"]["safety"]["ok"] is True
+
+
+def test_monitor_simulate_unknown_scenario_422() -> None:
+    r = _client().post(
+        "/monitor/simulate",
+        content=json.dumps({"scenario": "lunar_eclipse"}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 422

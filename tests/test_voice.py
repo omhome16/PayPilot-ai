@@ -99,3 +99,42 @@ def test_llm_writer_falls_back_to_template_on_garbage_or_unsafe() -> None:
     s = w.write(_ctx())
     assert s.source == "template"  # graceful, safe degradation
     assert "legal action" not in s.text.lower()
+
+
+def test_template_script_opens_with_history_aware_tone() -> None:
+    """The call speaks the customer's data: reliable payers get acknowledgment,
+    history-of-misses customers get a softer, help-first opener."""
+    from paypilot.voice.script import TemplateScriptWriter
+
+    base = {
+        "merchant": "FitZone",
+        "amount_rupees": 1499.0,
+        "payment_url": "https://rzp.io/rzp/x",
+        "days_to_salary": 20,
+        "attempt_no": 1,
+        "mode": "insufficient_funds",
+    }
+
+    reliable = TemplateScriptWriter().write({**base, "on_time_ratio": 0.92}).text
+    assert "hamesha time pe pay karte" in reliable
+
+    struggling = TemplateScriptWriter().write({**base, "on_time_ratio": 0.3}).text
+    assert "aasaan option" in struggling
+
+    neutral = TemplateScriptWriter().write(dict(base)).text
+    assert "hamesha time pe" not in neutral and "aasaan option" not in neutral
+
+
+def test_template_script_frames_revoked_mandates_as_consent_first() -> None:
+    from paypilot.voice.script import TemplateScriptWriter
+
+    ctx = {
+        "merchant": "FitZone",
+        "amount_rupees": 999.0,
+        "payment_url": "https://rzp.io/rzp/x",
+        "days_to_salary": 20,
+        "attempt_no": 1,
+        "mode": "mandate_revoked",
+    }
+    text = TemplateScriptWriter().write(ctx).text
+    assert "permission" in text
