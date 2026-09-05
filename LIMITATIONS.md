@@ -10,7 +10,7 @@ Honesty is a design principle, so the limits get the same care as the features.
   identical seeded worlds — not absolute rupee figures.
 - **Scripted strategist in batch evaluation.** The 20-world stability runs use a
   scripted doctrine brain (same `Brain` interface the LLM implements) so runs are
-  deterministic and CI-safe. The OpenRouter brain implements the identical contract;
+  deterministic and reproducible. The OpenRouter brain implements the identical contract;
   its decisions are journaled and replayable, but headline batch numbers were produced
   with the scripted brain.
 - **Loss-worlds exist** (2 of 20). Their money sits in far-from-payday crunches and

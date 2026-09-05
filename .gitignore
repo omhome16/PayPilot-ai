@@ -28,4 +28,5 @@ data/paypilot.db
 
 # Private learning journal (never published)
 learning/
+PITCH_SCRIPT.md
 

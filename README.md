@@ -75,7 +75,7 @@ Phases 0–9 complete (see `learning/` journal for the full build narrative).
 ## Engineering principles
 
 1. **TDD or it didn't happen** — every behavior starts as a failing test
-2. **Strict types** (`mypy --strict`) and lint-clean (`ruff`) from day one — enforced in CI
+2. **Strict types** (`mypy --strict`) and lint-clean (`ruff`) from day one — enforced locally before every commit
 3. **Bounded autonomy** — the agent can never violate a hard compliance gate, by construction
 4. **Measured honesty** — synthetic outcomes are calibrated to published rates and documented in
    `SIMULATOR_ASSUMPTIONS.md`; limitations live in `LIMITATIONS.md`
