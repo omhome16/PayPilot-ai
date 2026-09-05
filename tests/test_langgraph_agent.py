@@ -48,6 +48,22 @@ def test_graph_routes_through_fallback_on_illegal_proposal() -> None:
     assert final["report2"].approved is True
 
 
+def test_graph_routes_to_escalate_when_brain_unavailable() -> None:
+    """Fail-loud: a brain that raises BrainUnavailable ends the episode flagged
+    escalated — no deterministic substitute proposal is fabricated."""
+    from paypilot.graph.llm_brain import BrainUnavailable
+
+    class _BrokenBrain:
+        def propose(self, state) -> BrainProposal:
+            raise BrainUnavailable("provider down")
+
+    app = build_recovery_graph(_BrokenBrain())
+    final = app.invoke({"episode": _view(), "consult_seq": 1})
+    assert final.get("escalated") is True
+    assert "provider down" in final.get("escalate_reason", "")
+    assert final.get("abstain") is True and final.get("when") is None
+
+
 def test_graph_abstains_when_proposal_and_fallback_both_refused() -> None:
     """Late-crunch ISF episode: humans refused (small ticket) → salary-timed fallback
     also refused (lands past the 21-day stop) → graph must abstain lawfully."""

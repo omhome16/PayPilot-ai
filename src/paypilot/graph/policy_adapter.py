@@ -2,6 +2,10 @@
 
 This is the Phase-4 agent. The brain (LLM in LIVE, FakeBrain in tests/replay) proposes;
 guardrails dispose; every decision and override is journaled for record/replay.
+
+Fail-loud: a brain that cannot propose (BrainUnavailable) NEVER degrades to a
+deterministic guess. The episode is escalated to human ops review and the failure
+is journaled + counted — silence is the danger, not determinism.
 """
 
 import datetime as dt
@@ -19,6 +23,7 @@ from paypilot.graph.guardrails import (
     StandardGuardrails,
     proposal_run_at,
 )
+from paypilot.graph.llm_brain import BrainUnavailable
 
 _IST = dt.timedelta(hours=5, minutes=30)
 
@@ -59,6 +64,7 @@ class GraphPolicy:
         self._consult_seq: dict[str, int] = {}  # per-episode consult counter
         self.override_log: list[GuardrailReport] = []
         self.journal: list[DecisionJournalEntry] = []
+        self.brain_failures = 0  # fail-loud counter: brain unavailable → escalated
 
     # -- Policy API ----------------------------------------------------------------
 
@@ -70,8 +76,12 @@ class GraphPolicy:
         # SENSE — build the compact story the brain reasons over
         state: dict[str, Any] = self._sense(episode)
 
-        # THINK — the brain proposes (LLM in LIVE mode; FakeBrain in tests/replay)
-        proposal = self.brain.propose(state)
+        # THINK — the brain proposes (LLM in LIVE mode; FakeBrain in tests/replay).
+        # Fail-loud: a dead brain escalates to human review — never a silent guess.
+        try:
+            proposal = self.brain.propose(state)
+        except BrainUnavailable as exc:
+            return self._escalate_brain_failure(key, episode, exc)
 
         # Replay may carry an explicit abstention recorded earlier
         if proposal.abstain:
@@ -123,6 +133,35 @@ class GraphPolicy:
             reason=proposal.reason or report.reason,
         )
         return ProposedAction(intervention=proposal.action, run_at=when)
+
+    def _escalate_brain_failure(
+        self,
+        key: str,
+        episode: EpisodeView,
+        exc: BrainUnavailable,
+    ) -> ProposedAction:
+        """The brain could not propose — escalate to human ops review, loudly.
+
+        This is an EXCEPTION path, not a recovery choice: R3's ₹ threshold governs
+        cost-efficient human escalation for normal decisions; a brain outage always
+        warrants human eyes. Journaled + counted so dashboards and replays see it.
+        """
+        self.brain_failures += 1
+        marker = BrainProposal(
+            action=Intervention.HUMAN_ESCALATION,
+            days_ahead=1,
+            reason=f"fail-loud: brain unavailable — {exc}",
+        )
+        when = proposal_run_at(marker, episode)
+        self._journal(
+            key,
+            marker,
+            approved=False,
+            final=Intervention.HUMAN_ESCALATION,
+            when=when,
+            reason=f"fail-loud escalation: {exc}",
+        )
+        return ProposedAction(intervention=Intervention.HUMAN_ESCALATION, run_at=when)
 
     def _journal(
         self,

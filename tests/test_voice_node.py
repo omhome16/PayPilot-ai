@@ -1,10 +1,22 @@
 """P5 integration: VOICE_NUDGE in the graph produces a compliance-checked VoiceCall."""
 
 import datetime as dt
+from pathlib import Path
+
+import pytest
 
 from paypilot.domain.enums import FailureMode
 from paypilot.engine.policy import EpisodeView
-from paypilot.voice.node import VoiceNode, make_voice_node
+from paypilot.voice.node import (
+    DoNotCallError,
+    VoiceChannelUnavailable,
+    VoiceNode,
+    make_voice_node,
+)
+from paypilot.voice.script import ScriptSafetyError, TemplateScriptWriter
+from paypilot.voice.tts import NoopTTS
+
+REF = TemplateScriptWriter()  # the deterministic reference writer (explicit, fail-loud)
 
 
 def _view():
@@ -22,7 +34,7 @@ def _view():
 
 
 def test_voice_node_produces_safe_call_artifact() -> None:
-    node = VoiceNode(merchant_name="FitZone")
+    node = VoiceNode(merchant_name="FitZone", writer=REF)
     call = node.make_call(
         episode=_view(),
         customer_name="Priya",
@@ -31,16 +43,70 @@ def test_voice_node_produces_safe_call_artifact() -> None:
     assert call.script_hinglish
     assert "Priya" in call.script_hinglish and "1,499" in call.script_hinglish
     assert call.audio_path is None  # TTS backend not attached yet
+    assert call.source == "template"
 
 
-def test_make_voice_node_factory_uses_template_by_default() -> None:
-    make = make_voice_node(merchant_name="StreamFlix")
+def test_make_voice_node_factory_uses_explicit_reference_writer() -> None:
+    make = make_voice_node(merchant_name="StreamFlix", writer=TemplateScriptWriter())
     call = make(_view(), "Rahul", "https://rzp.io/rzp/x")
     assert call.merchant_name == "StreamFlix"
 
 
-def test_voice_node_rejects_unsafe_llm_script() -> None:
-    """Even if an LLM writer is plugged in, unsafe output never becomes a call."""
+def test_voice_node_without_writer_is_fail_loud() -> None:
+    """A node with NO writer cannot speak: make_call raises (fail-loud) rather
+    than silently producing a canned script for a live LLM decision."""
+    node = VoiceNode(merchant_name="FitZone")  # writer=None ⇒ channel unavailable
+    assert node.writer is None
+    with pytest.raises(VoiceChannelUnavailable):
+        node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
+    assert node.calls == []  # zero artifacts
+
+
+def test_do_not_call_registry_refuses_artifacts() -> None:
+    """Consent has teeth: an opted-out customer never receives a call artifact."""
+    node = VoiceNode(merchant_name="FitZone", writer=REF)
+    assert not node.is_opted_out("sub_0001:1")
+    node.mark_opted_out("sub_0001:1")
+    assert node.is_opted_out("sub_0001:1")
+    with pytest.raises(DoNotCallError):
+        node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
+    assert node.calls == []  # nothing was produced
+
+
+def test_tts_engine_populates_audio_path() -> None:
+    """With a TTS engine attached, an approved call gets a real audio file."""
+
+    class _FakeTTS:
+        def render(self, script: str, out_path: Path) -> Path | None:
+            out_path.write_text("fake audio", encoding="utf-8")
+            return out_path
+
+    node = VoiceNode(merchant_name="FitZone", writer=REF, tts=_FakeTTS())
+    call = node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
+    assert call.audio_path is not None
+    assert Path(call.audio_path).exists()
+
+
+def test_tts_failure_degrades_to_no_audio() -> None:
+    """A broken TTS backend never breaks the recovery: audio_path stays None."""
+
+    class _BrokenTTS:
+        def render(self, script: str, out_path: Path) -> Path | None:
+            raise RuntimeError("tts down")
+
+    node = VoiceNode(merchant_name="FitZone", writer=REF, tts=_BrokenTTS())
+    call = node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
+    assert call.audio_path is None
+    assert call.script_hinglish  # the call itself still exists and is safe
+
+
+def test_noop_tts_is_the_offline_default() -> None:
+    assert NoopTTS().render("some script", Path("x.mp3")) is None
+
+
+def test_voice_node_raises_on_unsafe_llm_script() -> None:
+    """Even if an LLM writer is plugged in, unsafe output never becomes a call —
+    and it never silently becomes the template: the node raises (fail-loud)."""
     import httpx
 
     from paypilot.voice.script import LLMScriptWriter
@@ -55,16 +121,15 @@ def test_voice_node_rejects_unsafe_llm_script() -> None:
 
     llm = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
     node = VoiceNode(merchant_name="FitZone", writer=llm)
-    call = node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
-    # fell back to the safe template — no threats in the artifact
-    assert "legal action" not in call.script_hinglish.lower()
-    assert call.source == "template"
+    with pytest.raises(ScriptSafetyError):
+        node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
+    assert node.calls == []  # zero artifacts — the escalation is visible upstream
 
 
 def test_salary_line_fires_only_near_payday() -> None:
     """days_to_salary is computed from the episode calendar — the salary line is
     no longer dead code: it appears near payday and never far from it."""
-    node = VoiceNode(merchant_name="FitZone")
+    node = VoiceNode(merchant_name="FitZone", writer=REF)
     near = node.make_call(_view(), "Priya", "https://rzp.io/rzp/a")  # failed 27 Sep → ~4d
     assert "Salary bhi aa hi rahi hogi" in near.script_hinglish
 
@@ -83,9 +148,10 @@ def test_salary_line_fires_only_near_payday() -> None:
     assert "Salary bhi aa hi rahi hogi" not in far_call.script_hinglish
 
 
-def test_strict_gate_drops_script_without_optout() -> None:
+def test_strict_gate_raises_on_script_without_optout() -> None:
     """The node enforces the FULL DR12 policy (opt-out + merchant ID) itself —
-    a writer that skips opt-out cannot ship a call artifact."""
+    a writer that skips opt-out cannot ship a call artifact, and the violation
+    is loud (raise), never a silent swap to the safe script."""
 
     class _NoOptOutWriter:
         def write(self, ctx):
@@ -100,6 +166,6 @@ def test_strict_gate_drops_script_without_optout() -> None:
             )
 
     node = VoiceNode(merchant_name="FitZone", writer=_NoOptOutWriter())
-    call = node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
-    assert call.source == "template"  # degraded to the always-safe script
-    assert "rok denge" in call.script_hinglish or "pause" in call.script_hinglish
+    with pytest.raises(ScriptSafetyError):
+        node.make_call(_view(), "Priya", "https://rzp.io/rzp/abc123")
+    assert node.calls == []  # zero artifacts — escalated, not papered over

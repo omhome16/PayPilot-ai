@@ -11,7 +11,7 @@ from paypilot.graph.live_hands import (
     create_payment_link,
     verify_webhook_signature,
 )
-from paypilot.graph.llm_brain import OpenRouterBrain
+from paypilot.graph.llm_brain import BrainUnavailable, OpenRouterBrain
 from paypilot.settings import Settings
 
 
@@ -177,7 +177,9 @@ def test_llm_brain_repairs_after_bad_json_then_succeeds() -> None:
     assert calls["n"] == 2
 
 
-def test_llm_brain_falls_back_lawfully_after_double_failure() -> None:
+def test_llm_brain_raises_after_double_parse_failure() -> None:
+    """Fail-loud: two unparseable replies raise BrainUnavailable — never a silent
+    'lawful default' the guardrails would then execute."""
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -188,13 +190,14 @@ def test_llm_brain_falls_back_lawfully_after_double_failure() -> None:
             request=req,
         )
 
-    p = _brain(handler).propose({"mode": "insufficient_funds"})
-    assert p.action is Intervention.SMART_RETRY  # lawful default; guardrails still run
+    with pytest.raises(BrainUnavailable):
+        _brain(handler).propose({"mode": "insufficient_funds"})
 
 
-def test_llm_brain_survives_http_errors() -> None:
+def test_llm_brain_raises_on_http_errors() -> None:
+    """A down provider raises BrainUnavailable — the graph escalates to humans."""
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(500, request=req)
 
-    p = _brain(handler).propose({"mode": "bank_downtime"})
-    assert p.action is Intervention.SMART_RETRY  # degradation, never crash
+    with pytest.raises(BrainUnavailable):
+        _brain(handler).propose({"mode": "bank_downtime"})

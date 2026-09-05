@@ -1,8 +1,11 @@
-"""Hinglish call-script writers: deterministic template + LLM with safe fallback.
+"""Hinglish call-script writers: deterministic template + LLM, both safety-gated.
 
 Layering: writers produce a CallScript; validate_script_safety gates it. The LLM
-writer NEVER lets an unsafe/unparseable output reach the caller — it degrades to
-the template (which is safety-checked itself).
+writer NEVER lets an unsafe/unparseable output reach the caller — but it also never
+SILENTLY substitutes the template: fail-loud means a failed/unsafe LLM output raises,
+so the caller escalates to a human instead of speaking a script the LLM didn't
+approve. The deterministic TemplateScriptWriter is a designed reference writer that
+callers opt into explicitly (eval, tests, reference node) — never an implicit crutch.
 """
 
 import json
@@ -12,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from paypilot.voice.safety import _ABUSE, _BLOCKLIST, _SHOUT_RUN
+from paypilot.voice.safety import _ABUSE, _BLOCKLIST, _SHOUT_RUN, MAX_WORDS
 
 _WORDS_PER_SECOND = 2.5
 _AMOUNT_RE = re.compile(r"(?:₹|rs\.?)\s?[\d,]+", re.IGNORECASE)
@@ -31,6 +34,15 @@ class CallScript:
 
 class ScriptSafetyError(ValueError):
     """Raised when a script violates voice-channel policy."""
+
+
+class VoiceWriterUnavailable(RuntimeError):
+    """Raised when the LLM script writer cannot produce a script (fail-loud).
+
+    Distinct from ScriptSafetyError: this is the writer being DOWN or returning
+    garbage, not a policy violation. Either way the caller must escalate rather
+    than silently speaking a substitute.
+    """
 
 
 def validate_script_safety(
@@ -56,6 +68,10 @@ def validate_script_safety(
     shout = _SHOUT_RUN.search(text)
     if shout is not None:
         problems.append(f"spam shouting: '{shout.group(0)}'")
+
+    words = len(text.split())
+    if words > MAX_WORDS:
+        problems.append(f"script too long: {words} words (max {MAX_WORDS})")
 
     if require_amount and _AMOUNT_RE.search(text) is None:
         problems.append("required amount (₹/Rs …) missing")
@@ -120,7 +136,13 @@ Reply with ONLY strict JSON: {"text": "<script>"}"""
 
 
 class LLMScriptWriter:
-    """LLM-written scripts (OpenRouter-compatible), safety-gated with template fallback."""
+    """LLM-written scripts (OpenRouter-compatible), fail-loud on any failure.
+
+    On a network/API failure or unparseable output the writer raises
+    VoiceWriterUnavailable; on unsafe output (threats, missing amount/link,
+    over-length) validate_script_safety raises ScriptSafetyError. No silent
+    template substitution — the caller escalates the call to a human instead.
+    """
 
     def __init__(
         self,
@@ -146,15 +168,16 @@ class LLMScriptWriter:
             {"role": "user", "content": json.dumps(ctx)},
         ]
         content = self._call(messages)
+        if content is None:
+            raise VoiceWriterUnavailable("LLM script writer call failed (network/API)")
         parsed = self._parse(content)
-        if parsed is not None:
-            script = CallScript(text=parsed, source="llm")
-            try:
-                validate_script_safety(script, require_amount=True, require_link=True)
-                return script
-            except ScriptSafetyError:
-                pass  # unsafe LLM output never reaches the caller
-        return TemplateScriptWriter().write(ctx)
+        if parsed is None:
+            raise VoiceWriterUnavailable("LLM script output unparseable")
+        script = CallScript(text=parsed, source="llm")
+        # Unsafe or over-long LLM text raises here — it never becomes a call, and it
+        # never silently becomes the template. The caller escalates.
+        validate_script_safety(script, require_amount=True, require_link=True)
+        return script
 
     def _call(self, messages: list[dict[str, str]]) -> str | None:
         try:

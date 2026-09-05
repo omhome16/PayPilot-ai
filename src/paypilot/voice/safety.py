@@ -23,6 +23,7 @@ _ABUSE = ("bekaar", "nalayak", "bewakoof", "stupid", "idiot")
 _SHOUT_RUN = re.compile(r"[A-Z]{4,}!")  # e.g. "ABHI ABHI ABHI!!!"
 _OPTOUT_WORDS = ("rok denge", "pause", "cancel", "band kar", "chhod", "nahi chalana chahte")
 _AMOUNT_RE = re.compile(r"₹\s?[\d,]+")
+MAX_WORDS = 120  # ≈48s at 2.5 wps — a call must respect the human's time (DR11)
 
 
 @dataclass(frozen=True)
@@ -59,5 +60,9 @@ def validate_script(script: str, *, merchant_name: str) -> ScriptReport:
     shout = _SHOUT_RUN.search(text)
     if shout is not None:
         problems.append(f"spam shouting detected: '{shout.group(0)}'")
+
+    words = len(text.split())
+    if words > MAX_WORDS:
+        problems.append(f"script too long: {words} words (max {MAX_WORDS})")
 
     return ScriptReport(ok=not problems, violations=problems)

@@ -15,6 +15,9 @@ dependencies = [
     "langgraph>=1.2.11",
 ]
 
+[project.optional-dependencies]
+tts = ["edge-tts>=6.1.10"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",
@@ -32,6 +35,7 @@ build-backend = "hatchling.build"
 paypilot-eval = "paypilot.eval.report:main"
 paypilot-dashboard = "paypilot.dashboard.render:main"
 paypilot-live-eval = "paypilot.eval.live_eval:main"
+paypilot-tts = "paypilot.voice.tts:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/paypilot"]

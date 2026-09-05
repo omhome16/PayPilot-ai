@@ -114,6 +114,24 @@ def test_guardrail_fallback_is_itself_legal_for_the_mode() -> None:
     assert g.check(_view(mode=FailureMode.AUTH_TIMEOUT, amount_paise=150_000), fb).approved
 
 
+def test_graph_policy_escalates_loudly_when_brain_unavailable() -> None:
+    """Fail-loud: a dead brain escalates to human review — even on a small ticket —
+    and the failure is journaled + counted, never silently replaced by a guess."""
+    from paypilot.graph.llm_brain import BrainUnavailable
+
+    class _BrokenBrain:
+        def propose(self, state) -> BrainProposal:
+            raise BrainUnavailable("provider down")
+
+    gp = GraphPolicy(brain=_BrokenBrain())
+    act = gp.next_action(_view(amount_paise=19_900))  # small ticket: still escalates
+    assert act is not None
+    assert act.intervention is Intervention.HUMAN_ESCALATION
+    assert gp.brain_failures == 1
+    entry = gp.journal[-1]
+    assert "fail-loud" in entry.reason
+
+
 def test_big_transient_episode_with_illegal_proposal_still_acts() -> None:
     brain = FakeBrain(default_action=Intervention.PAYMENT_LINK)  # illegal for AUTH_TIMEOUT
     gp = GraphPolicy(brain=brain)

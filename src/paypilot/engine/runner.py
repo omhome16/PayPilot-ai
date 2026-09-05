@@ -27,7 +27,8 @@ from paypilot.simulator.outcome import OutcomeModel
 from paypilot.simulator.population import Population
 from paypilot.simulator.window import WindowSpec
 from paypilot.voice.models import VoiceCall
-from paypilot.voice.node import VoiceNode
+from paypilot.voice.node import DoNotCallError, VoiceChannelUnavailable, VoiceNode
+from paypilot.voice.script import ScriptSafetyError, VoiceWriterUnavailable
 
 _IST_OFFSET = dt.timedelta(hours=5, minutes=30)
 _LEGAL_START = 8  # 08:00 IST
@@ -185,20 +186,56 @@ class RunEngine:
                 )
             )
 
-            # execute the voice channel: decision → safety-validated call artifact
+            # execute the voice channel: decision → safety-validated call artifact.
+            # Fail-loud: if the channel cannot produce a call, the episode escalates
+            # to human review (voice_escalate) instead of silently dropping the touch.
             if proposal.intervention is Intervention.VOICE_NUDGE and self._voice_node is not None:
-                call = self._make_voice_call(key, st, clamped)
-                if call is not None:
+                episode_key = f"{sub_id}:{ep_no}"
+                if self._voice_node.is_opted_out(episode_key):
                     timeline.append(
                         TimelineEntry(
-                            "voice",
+                            "voice_skip",
                             clamped,
                             sub_id,
                             ep_no,
-                            f"safe Hinglish call ({call.source}, "
-                            f"~{call.estimated_duration_seconds}s)",
+                            "customer opted out (do-not-call honoured)",
                         )
                     )
+                else:
+                    try:
+                        call = self._make_voice_call(key, st, clamped)
+                    except DoNotCallError as exc:
+                        # registry changed between check and call (defensive): skip, don't call
+                        timeline.append(
+                            TimelineEntry("voice_skip", clamped, sub_id, ep_no, str(exc))
+                        )
+                    except (
+                        VoiceWriterUnavailable,
+                        VoiceChannelUnavailable,
+                        ScriptSafetyError,
+                    ) as exc:
+                        st.closed = True
+                        timeline.append(
+                            TimelineEntry(
+                                "voice_escalate",
+                                clamped,
+                                sub_id,
+                                ep_no,
+                                f"fail-loud escalation: {exc}",
+                            )
+                        )
+                        continue  # humans take over; no draw for a call that never happened
+                    else:
+                        timeline.append(
+                            TimelineEntry(
+                                "voice",
+                                clamped,
+                                sub_id,
+                                ep_no,
+                                f"safe Hinglish call ({call.source}, "
+                                f"~{call.estimated_duration_seconds}s)",
+                            )
+                        )
 
             # P4.5: past behavior personalizes the draw (both arms get profiles — fair)
             profile = self._profile_by_customer.get(self._subs_by_id[sub_id].customer_id)
@@ -264,12 +301,15 @@ class RunEngine:
 
     def _make_voice_call(
         self, key: tuple[str, int], st: _EpisodeState, now: dt.datetime
-    ) -> VoiceCall | None:
+    ) -> VoiceCall:
         """Voice channel hands: generate + strictly validate the call script.
-        Any voice-channel failure degrades to None — the run continues lawfully."""
-        if self._voice_node is None:
-            return None
+        Raises on channel failure (DoNotCallError, VoiceWriterUnavailable,
+        VoiceChannelUnavailable, ScriptSafetyError) — the caller escalates loudly.
+        The caller guarantees self._voice_node is not None."""
         sub_id, ep_no = key
+        if self._voice_node is None:  # defensive; unreachable via the run() guard
+            raise VoiceChannelUnavailable("voice node not configured")
+        voice_node = self._voice_node
         sub = self._subs_by_id[sub_id]
         cust = self._cust_by_id[sub.customer_id]
         view = EpisodeView(
@@ -285,10 +325,7 @@ class RunEngine:
             profile=self._profile_by_customer.get(sub.customer_id),
         )
         url = f"https://rzp.io/i/{sub_id}-ep{ep_no}"  # synthetic link in simulated worlds
-        try:
-            return self._voice_node.make_call(view, cust.name, url)
-        except Exception:  # noqa: BLE001 — a voice failure must never break a recovery run
-            return None
+        return voice_node.make_call(view, cust.name, url)
 
     def _consult(
         self,

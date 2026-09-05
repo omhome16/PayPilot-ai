@@ -16,6 +16,7 @@ from paypilot.simulator.failure_gen import FailureGenSpec, generate_failures
 from paypilot.simulator.population import PopulationSpec, generate_population
 from paypilot.simulator.window import WindowSpec
 from paypilot.voice.node import VoiceNode
+from paypilot.voice.script import TemplateScriptWriter
 
 _WINDOW = WindowSpec(start=dt.date(2026, 9, 1), end=dt.date(2026, 9, 30))
 
@@ -65,7 +66,8 @@ def build_dashboard_data(
     pop = generate_population(PopulationSpec(size=min(stability_size, 120), seed=focus_seed))
     events = generate_failures(pop, FailureGenSpec(window=_WINDOW, seed=focus_seed))
     gp = GraphPolicy(brain=FakeBrain(fn=scripted_strategist))
-    voice = VoiceNode(merchant_name="PayPilot")  # VOICE_NUDGE decisions become real artifacts
+    # reference voice node: deterministic scripts, explicitly opted into (fail-loud)
+    voice = VoiceNode(merchant_name="PayPilot", writer=TemplateScriptWriter())
     run = RunEngine(pop, window=_WINDOW, voice_node=voice).run(gp, events)
     voice_calls = len(voice.calls)
 

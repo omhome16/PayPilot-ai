@@ -2,7 +2,9 @@
 
 Same wire protocol as our Phase-3 Reasoner but returns structured BrainProposals.
 Prompt embeds the research design rules (research/07). Output parsing is strict;
-any malformed answer triggers one repair round, then lawful fallback.
+any malformed answer triggers one repair round, then FAILS LOUD: an unavailable or
+unparseable brain raises BrainUnavailable so callers escalate to humans — a silent
+'lawful default' would execute an action the LLM never justified.
 """
 
 import json
@@ -12,6 +14,15 @@ import httpx
 
 from paypilot.domain.enums import Intervention
 from paypilot.graph.brain import BrainProposal
+
+
+class BrainUnavailable(RuntimeError):
+    """Raised when the LLM brain cannot produce a proposal (fail-loud).
+
+    Catch it at the graph/adapter boundary and escalate the episode to human
+    review — never substitute a deterministic guess for the missing brain.
+    """
+
 
 PROMPT_GRAPH_V1 = """You are PayPilot's recovery strategist for Indian subscription payments.
 Given a JSON situation, propose ONE next move as strict JSON:
@@ -87,11 +98,10 @@ class OpenRouterBrain:
         parsed2 = self._parse(content2)
         if parsed2 is not None:
             return parsed2
-        return BrainProposal(
-            action=Intervention.SMART_RETRY,
-            on_salary_day=True,
-            reason="brain output unparseable; lawful default",
-        )
+        # Fail-loud: neither attempt produced a usable proposal. Never guess.
+        if content is None and content2 is None:
+            raise BrainUnavailable("LLM brain call failed (network/API error)")
+        raise BrainUnavailable("LLM brain output unparseable after repair round")
 
     def _call(self, body: dict[str, Any]) -> str | None:
         try:
@@ -100,7 +110,7 @@ class OpenRouterBrain:
             data = r.json()
             self.tokens_used += int(data.get("usage", {}).get("total_tokens", 0))
             return str(data["choices"][0]["message"]["content"]).strip()
-        except Exception:  # noqa: BLE001 — degradation is the design
+        except Exception:  # noqa: BLE001 — failure is surfaced loudly by the caller
             return None
 
     @staticmethod

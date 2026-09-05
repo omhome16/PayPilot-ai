@@ -35,6 +35,7 @@ class LiveWorldOutcome:
     llm_paise: int
     llm_consults: int
     llm_overrides: int  # proposals the rails refused / replaced
+    llm_failures: int = 0  # fail-loud: brain unavailable → episodes escalated to humans
 
 
 def build_live_brain(settings: Settings | None = None) -> Brain | None:
@@ -81,6 +82,7 @@ def run_live_brain_eval(
                 llm_paise=llm.recovered_paise,
                 llm_consults=len(gp.journal),
                 llm_overrides=len(gp.override_log),
+                llm_failures=gp.brain_failures,
             )
         )
     return outcomes
@@ -115,6 +117,12 @@ def render_live_markdown(outcomes: list[LiveWorldOutcome], tokens_used: int, mod
         f"- **Rails activity:** {sum(o.llm_overrides for o in outcomes)} proposals overridden "
         f"across {sum(o.llm_consults for o in outcomes)} consultations"
     )
+    total_failures = sum(o.llm_failures for o in outcomes)
+    if total_failures:
+        lines.append(
+            f"- **Fail-loud:** ⚠️ {total_failures} consults hit an unavailable brain and "
+            "escalated to human review (never silently degraded)"
+        )
     lines.append(f"- **LLM cost:** {tokens_used:,} tokens")
     lines.append("")
     lines.append("## Per-world detail")

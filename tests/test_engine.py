@@ -189,10 +189,12 @@ def test_engine_executes_voice_decisions_as_safe_call_artifacts() -> None:
             return None
 
     from paypilot.voice.node import VoiceNode
+    from paypilot.voice.script import TemplateScriptWriter
 
     pop, events = _september_events()
     w = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
-    voice = VoiceNode(merchant_name="PayPilot")
+    # reference node: deterministic scripts, explicitly opted into (fail-loud)
+    voice = VoiceNode(merchant_name="PayPilot", writer=TemplateScriptWriter())
     result = RunEngine(pop, window=w, voice_node=voice).run(_VoiceForFunds(), events)
 
     voice_decisions = sum(
@@ -210,3 +212,75 @@ def test_engine_executes_voice_decisions_as_safe_call_artifacts() -> None:
     r1 = RunEngine(pop, window=w, seed=7).run(_VoiceForFunds(), events)
     r2 = RunEngine(pop, window=w, seed=7).run(_VoiceForFunds(), events)
     assert r1 == r2
+
+
+def test_engine_honours_do_not_call_registry() -> None:
+    """A customer who opted out gets a voice_skip entry, never a call artifact."""
+
+    class _VoiceForFunds:
+        name = "voice-funds"
+
+        def next_action(self, ep: EpisodeView) -> ProposedAction | None:
+            if ep.mode is FailureMode.INSUFFICIENT_FUNDS and ep.amount_paise >= 100_000:
+                return ProposedAction(
+                    intervention=Intervention.VOICE_NUDGE,
+                    run_at=ep.first_failed_at + timedelta(days=1),
+                )
+            return None
+
+    from paypilot.voice.node import VoiceNode
+    from paypilot.voice.script import TemplateScriptWriter
+
+    pop, events = _september_events()
+    w = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
+    voice = VoiceNode(merchant_name="PayPilot", writer=TemplateScriptWriter())
+    # pick a big-ticket ISF episode and opt its customer out
+    target = next(
+        e
+        for e in events
+        if e.mode is FailureMode.INSUFFICIENT_FUNDS and e.amount_paise >= 100_000
+    )
+    voice.mark_opted_out(f"{target.subscription_id}:{target.episode_no}")
+    result = RunEngine(pop, window=w, voice_node=voice).run(_VoiceForFunds(), events)
+
+    skips = [t for t in result.timeline if t.kind == "voice_skip"]
+    assert skips, "expected a voice_skip entry for the opted-out customer"
+    assert any(t.subscription_id == target.subscription_id for t in skips)
+    # and no call artifact exists for that episode
+    opted_key = f"{target.subscription_id}:{target.episode_no}"
+    assert not any(c.episode_key == opted_key for c in voice.calls)
+
+
+def test_engine_escalates_loudly_when_voice_channel_cannot_execute() -> None:
+    """Fail-loud: a VOICE_NUDGE the channel cannot execute (writer down) becomes a
+    voice_escalate timeline entry + the episode closes — never a silent drop."""
+
+    class _VoiceForFunds:
+        """High-value insufficient-funds episodes get the personal channel."""
+
+        name = "voice-funds"
+
+        def next_action(self, ep: EpisodeView) -> ProposedAction | None:
+            if ep.mode is FailureMode.INSUFFICIENT_FUNDS and ep.amount_paise >= 100_000:
+                return ProposedAction(
+                    intervention=Intervention.VOICE_NUDGE,
+                    run_at=ep.first_failed_at + timedelta(days=1),
+                )
+            return None
+
+    from paypilot.voice.node import VoiceNode
+    from paypilot.voice.script import VoiceWriterUnavailable
+
+    class _DownWriter:
+        def write(self, ctx):
+            raise VoiceWriterUnavailable("LLM provider down")
+
+    pop, events = _september_events()
+    w = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
+    voice = VoiceNode(merchant_name="PayPilot", writer=_DownWriter())
+    result = RunEngine(pop, window=w, voice_node=voice).run(_VoiceForFunds(), events)
+
+    escalations = [t for t in result.timeline if t.kind == "voice_escalate"]
+    assert escalations, "expected fail-loud voice_escalate entries"
+    assert all("LLM provider down" in t.detail for t in escalations)
+    assert len(voice.calls) == 0  # nothing was silently spoken

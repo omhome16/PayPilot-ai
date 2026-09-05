@@ -63,3 +63,15 @@ def test_amount_mention_required() -> None:
     report = validate_script(no_amount, merchant_name="FitZone")
     assert report.ok is False
     assert any("amount" in v.lower() for v in report.violations)
+
+
+def test_overlong_script_fails() -> None:
+    """A call must respect the human's time: >120 words is rejected (DR11)."""
+    long_script = (
+        "Namaste Priya, FitZone se bol rahi hoon. Aapka Rs 500 ka payment pending hai. "
+        "Kripya jald clear kar dijiye, aur agar aap subscription nahi chahate toh bata dijiye, "
+        "hum rok denge ya pause kar denge. Dhanyavaad. "
+    ) * 8  # ~120+ words
+    report = validate_script(long_script, merchant_name="FitZone")
+    assert report.ok is False
+    assert any("too long" in v.lower() for v in report.violations)

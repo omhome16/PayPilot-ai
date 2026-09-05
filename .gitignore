@@ -21,6 +21,9 @@ Thumbs.db
 
 # Demo artifacts
 data/runs/
+data/audio/
+data/shots/
+data/paypilot.db
 *.sqlite3
 
 # Private learning journal (never published)

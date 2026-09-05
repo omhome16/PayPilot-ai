@@ -118,26 +118,94 @@ def test_zero_amount_maps_to_422() -> None:
     assert r.status_code == 422
 
 
-def test_voice_decision_returns_safe_call_artifact() -> None:
-    """Big-ticket, thrice-failed insufficient-funds → VOICE_NUDGE → the response
-    carries a generated Hinglish call script with the mandatory opt-out."""
+def test_voice_decision_escalates_loudly_without_llm_writer() -> None:
+    """Fail-loud: no OPENROUTER key ⇒ no script writer ⇒ a VOICE_NUDGE decision
+    escalates to human_escalation with a degraded flag — never a canned script."""
     payload = _failure_payload(attempt_no=3)
     payload["payload"]["payment"]["entity"]["amount"] = 150_000
     r = _post(_client(), payload)
     assert r.status_code == 200
     data = r.json()
+    assert data["action"] == "human_escalation"
+    assert data["degraded"]["channel"] == "voice"
+    assert "OPENROUTER" in data["degraded"]["reason"]
+    vc = data["voice_call"]
+    assert vc["escalated"] is True
+    assert "script" not in vc  # no substitute script was fabricated
+
+
+def test_voice_decision_llm_writer_produces_script(monkeypatch) -> None:
+    """With an LLM script writer injected (mocked transport), the voice decision
+    ships the LLM-written, safety-validated script."""
+    import httpx
+
+    from paypilot.engine.agent import AgentPolicy
+    from paypilot.voice.node import VoiceNode
+    from paypilot.voice.script import LLMScriptWriter
+
+    monkeypatch.setattr(
+        "paypilot.api.app.create_payment_link",
+        lambda settings, **kw: "https://rzp.io/rzp/abc123",
+    )
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        content = (
+            '{"text": "Namaste Rohit ji! StreamFlix se bol raha hoon. Aapka \\u20b91,500 ka '
+            'payment pending hai. Is link se 2 minute mein pay kar dijiye: '
+            'https://rzp.io/rzp/abc123. Aur agar subscription nahi chahate toh bata '
+            'dijiye, hum rok denge. Dhanyavaad!"}'
+        )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": content}}], "usage": {}},
+            request=req,
+        )
+
+    writer = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
+    voice = VoiceNode(merchant_name="StreamFlix", writer=writer)
+    c = TestClient(create_app(settings=_settings(), policy=AgentPolicy(), voice=voice))
+
+    payload = _failure_payload(attempt_no=3, customer_name="Rohit")
+    payload["payload"]["payment"]["entity"]["amount"] = 150_000
+    r = _post(c, payload)
+    assert r.status_code == 200
+    data = r.json()
     assert data["action"] == "voice_nudge"
     vc = data["voice_call"]
-    assert vc["source"] == "template"  # no OPENROUTER key in test settings
-    assert vc["audio_path"] is None
-    assert vc["estimated_duration_seconds"] > 0
-    low = vc["script"].lower()
-    assert "rok denge" in low or "pause" in low
-    assert "₹1,500" in vc["script"]
-    strategy = vc["strategy"]
-    assert strategy["failed_attempts"] == 3
-    assert strategy["days_to_salary"] == 3  # 2026-08-29 IST → Sep 1 salary
-    assert strategy["safety"]["ok"] is True and strategy["safety"]["violations"] == []
+    assert vc["source"] == "llm"
+    assert "Rohit" in vc["script"] and "rok denge" in vc["script"].lower()
+    assert vc["strategy"]["safety"]["ok"] is True
+
+
+def test_voice_decision_escalates_when_llm_writer_fails(monkeypatch) -> None:
+    """Fail-loud: the LLM writer is DOWN → the voice decision escalates to human
+    review with a loud degraded flag (no template substitution)."""
+    import httpx
+
+    from paypilot.engine.agent import AgentPolicy
+    from paypilot.voice.node import VoiceNode
+    from paypilot.voice.script import LLMScriptWriter
+
+    monkeypatch.setattr(
+        "paypilot.api.app.create_payment_link",
+        lambda settings, **kw: "https://rzp.io/rzp/abc123",
+    )
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("provider down")
+
+    writer = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
+    voice = VoiceNode(merchant_name="StreamFlix", writer=writer)
+    c = TestClient(create_app(settings=_settings(), policy=AgentPolicy(), voice=voice))
+
+    payload = _failure_payload(attempt_no=3)
+    payload["payload"]["payment"]["entity"]["amount"] = 150_000
+    r = _post(c, payload)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["action"] == "human_escalation"
+    assert "fail-loud" in data["degraded"]["reason"]
+    assert data["voice_call"]["escalated"] is True
 
 
 def test_monitor_page_renders() -> None:
@@ -149,7 +217,12 @@ def test_monitor_page_renders() -> None:
 
 def test_monitor_simulate_scenarios_drive_the_agent() -> None:
     c = _client()
-    expected = {"fresh_funds": "smart_retry", "revoked": "payment_link", "voice": "voice_nudge"}
+    # no OPENROUTER key ⇒ the voice scenario FAILS LOUD to human escalation
+    expected = {
+        "fresh_funds": "smart_retry",
+        "revoked": "payment_link",
+        "voice": "human_escalation",
+    }
     for scenario, action in expected.items():
         r = c.post(
             "/monitor/simulate",
@@ -164,10 +237,11 @@ def test_monitor_simulate_scenarios_drive_the_agent() -> None:
     for action in expected.values():
         assert action in actions
     counters = data["counters"]
-    assert counters["events"] >= 3 and counters["voice_nudge"] >= 1
-    voice_event = next(e for e in data["events"] if e["action"] == "voice_nudge")
-    assert voice_event["voice"]["script"]
-    assert voice_event["voice"]["strategy"]["safety"]["ok"] is True
+    assert counters["events"] >= 3 and counters["human_escalation"] >= 1
+    escalated = next(e for e in data["events"] if e["action"] == "human_escalation")
+    assert escalated["degraded"]["channel"] == "voice"
+    assert escalated["voice"]["escalated"] is True
+    assert "script" not in escalated["voice"]
 
 
 def test_monitor_simulate_unknown_scenario_422() -> None:

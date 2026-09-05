@@ -3,6 +3,9 @@
 Same brain + guardrails as the linear adapter — but expressed as an inspectable,
 checkpointable state machine: SENSE → THINK → VALIDATE → (route) → ACT/ABSTAIN.
 Every node's input/output is visible to the dashboard and to tests.
+
+Fail-loud: a brain that raises BrainUnavailable routes to an ESCALATE node instead
+of degrading — the episode ends flagged escalated for human review.
 """
 
 import datetime as dt
@@ -20,6 +23,7 @@ from paypilot.graph.guardrails import (
     StandardGuardrails,
     proposal_run_at,
 )
+from paypilot.graph.llm_brain import BrainUnavailable
 
 
 class GraphState(TypedDict, total=False):
@@ -32,6 +36,8 @@ class GraphState(TypedDict, total=False):
     report2: GuardrailReport | None  # fallback re-validation (when overridden)
     when: dt.datetime | None  # ACT schedule
     abstain: bool  # True → engine returns None (do nothing)
+    escalated: bool  # True → the brain failed; human review required (fail-loud)
+    escalate_reason: str  # why the brain could not propose
 
 
 def _sense(state: GraphState) -> GraphState:
@@ -72,9 +78,22 @@ def _sense(state: GraphState) -> GraphState:
 
 def _make_think(brain: Brain) -> "Any":
     def think(state: GraphState) -> GraphState:
-        return {"proposal": brain.propose(state["story"])}
+        try:
+            return {"proposal": brain.propose(state["story"])}
+        except BrainUnavailable as exc:
+            # fail-loud: no proposal, no deterministic substitute — escalate
+            return {"escalated": True, "escalate_reason": str(exc)}
 
     return think
+
+
+def _route_after_think(state: GraphState) -> str:
+    return "escalate" if state.get("escalated") else "validate"
+
+
+def _escalate(state: GraphState) -> GraphState:
+    """Brain failure → the episode ends flagged for human review (fail-loud)."""
+    return {"escalated": True, "abstain": True, "when": None}
 
 
 def _never() -> BrainProposal:
@@ -127,10 +146,14 @@ def build_recovery_graph(
     g.add_node("validate", validate)
     g.add_node("act", act)
     g.add_node("abstain", abstain)
+    g.add_node("escalate", _escalate)
     g.set_entry_point("sense")
     g.add_edge("sense", "think")
-    g.add_edge("think", "validate")
+    g.add_conditional_edges(
+        "think", _route_after_think, {"escalate": "escalate", "validate": "validate"}
+    )
     g.add_conditional_edges("validate", route_after_validate, {"act": "act", "abstain": "abstain"})
     g.add_edge("act", END)
     g.add_edge("abstain", END)
+    g.add_edge("escalate", END)
     return g.compile()

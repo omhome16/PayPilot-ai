@@ -7,6 +7,7 @@ from paypilot.voice.script import (
     LLMScriptWriter,
     ScriptSafetyError,
     TemplateScriptWriter,
+    VoiceWriterUnavailable,
     validate_script_safety,
 )
 
@@ -83,11 +84,12 @@ def test_llm_writer_parses_good_response() -> None:
     assert s.source == "llm"
 
 
-def test_llm_writer_falls_back_to_template_on_garbage_or_unsafe() -> None:
+def test_llm_writer_raises_on_unsafe_output_never_silently_swaps() -> None:
+    """Fail-loud: unsafe (threatening) LLM output raises — it must never reach the
+    caller, and it must never silently become the template script."""
     import httpx
 
     def handler(req: httpx.Request) -> httpx.Response:
-        # unsafe (threatening) LLM output must never reach the caller
         content = '{"text": "Pay Rs 199 in 10 minutes or legal action follows."}'
         return httpx.Response(
             200,
@@ -96,9 +98,57 @@ def test_llm_writer_falls_back_to_template_on_garbage_or_unsafe() -> None:
         )
 
     w = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
-    s = w.write(_ctx())
-    assert s.source == "template"  # graceful, safe degradation
-    assert "legal action" not in s.text.lower()
+    with pytest.raises(ScriptSafetyError):
+        w.write(_ctx())
+
+
+def test_llm_writer_raises_when_script_too_long() -> None:
+    """An over-long LLM script (>120 words) raises — the caller escalates instead
+    of shipping an unapproved substitute."""
+    import httpx
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        long_text = "Aapka Rs 199 ka payment pending hai. Kripya jald clear kar dijiye. " * 12
+        content = f'{{"text": "{long_text}"}}'
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": content}}], "usage": {}},
+            request=req,
+        )
+
+    w = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
+    with pytest.raises(ScriptSafetyError):
+        w.write(_ctx())
+
+
+def test_llm_writer_raises_when_unparseable() -> None:
+    """Garbage that never becomes JSON raises VoiceWriterUnavailable — the caller
+    escalates loudly instead of speaking a substitute script."""
+    import httpx
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "totally not json"}}], "usage": {}},
+            request=req,
+        )
+
+    w = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
+    with pytest.raises(VoiceWriterUnavailable):
+        w.write(_ctx())
+
+
+def test_llm_writer_raises_when_network_fails() -> None:
+    """A down provider raises VoiceWriterUnavailable (fail-loud), never a template."""
+    import httpx
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("provider down")
+
+    w = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
+    with pytest.raises(VoiceWriterUnavailable):
+        w.write(_ctx())
+    assert w.calls == 1  # one attempt, loudly failed
 
 
 def test_template_script_opens_with_history_aware_tone() -> None:

@@ -1,26 +1,54 @@
 """VoiceNode: turns an approved VOICE_NUDGE decision into a safe VoiceCall artifact.
 
-Writers are pluggable (template default, LLM optional); every produced script is
-safety-validated before becoming a call artifact. Two gates apply:
-1. Writers gate their own output (blocklists, required amount/link).
+Writers are pluggable; every produced script is safety-validated before becoming
+a call artifact. Two gates apply:
+1. Writers gate their own output (blocklists, required amount/link, length).
 2. The node re-checks the STRICT channel policy (merchant identified, opt-out
-   offered — DR12) and degrades to the template on any violation. Unsafe text
-   can never become a call, no matter how it was produced.
+   offered — DR12) and REFUSES on any violation. Unsafe text can never become a
+   call, no matter how it was produced — and it is never silently replaced: the
+   node raises so the caller escalates to a human (fail-loud).
 
-TTS rendering attaches later — the artifact carries audio_path=None until then.
+A node constructed with writer=None has NO script capacity: make_call raises
+VoiceChannelUnavailable. Deterministic script production is an explicit choice
+(pass TemplateScriptWriter for the reference path); it is never an implicit
+fallback for a broken or absent LLM writer.
+
+Consent has teeth: a customer who opted out is in the do-not-call registry and
+make_call refuses to produce an artifact for them (DR12 — the offer is only
+meaningful if it is honoured).
+
+TTS rendering is pluggable: a TTSEngine, when supplied, renders the approved
+script to a real audio file and the artifact's audio_path becomes that path.
 """
 
 import datetime as dt
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from paypilot.domain.calendar import IndianPaymentCalendar
 from paypilot.engine.policy import EpisodeView
 from paypilot.voice.models import VoiceCall
 from paypilot.voice.safety import validate_script
-from paypilot.voice.script import CallScript, TemplateScriptWriter
+from paypilot.voice.script import CallScript, ScriptSafetyError
 
 _IST = dt.timedelta(hours=5, minutes=30)
+
+
+class DoNotCallError(ValueError):
+    """Raised when make_call is attempted for a customer who opted out."""
+
+
+class VoiceChannelUnavailable(RuntimeError):
+    """Raised when no script writer is configured (fail-loud).
+
+    The voice channel cannot speak at all — the caller must escalate the episode
+    to human review rather than fake an artifact.
+    """
+
+
+class TTSEngine(Protocol):
+    def render(self, script: str, out_path: Path) -> Path | None: ...
 
 
 class ScriptWriter(Protocol):
@@ -32,10 +60,25 @@ class VoiceNode:
         self,
         merchant_name: str,
         writer: ScriptWriter | None = None,
+        tts: TTSEngine | None = None,
     ) -> None:
         self.merchant_name = merchant_name
-        self.writer: ScriptWriter = writer or TemplateScriptWriter()
+        # writer=None means the channel is UNAVAILABLE (fail-loud), never a default.
+        self.writer: ScriptWriter | None = writer
+        self.tts: TTSEngine | None = tts
         self.calls: list[VoiceCall] = []
+        self._do_not_call: set[str] = set()
+
+    # -- consent registry -----------------------------------------------------
+
+    def mark_opted_out(self, episode_key: str) -> None:
+        """Record that this customer asked to stop being called (DR12 honouring)."""
+        self._do_not_call.add(episode_key)
+
+    def is_opted_out(self, episode_key: str) -> bool:
+        return episode_key in self._do_not_call
+
+    # -- the call -------------------------------------------------------------
 
     def make_call(
         self,
@@ -43,6 +86,13 @@ class VoiceNode:
         customer_name: str,
         payment_url: str,
     ) -> VoiceCall:
+        episode_key = f"{episode.subscription_id}:{episode.episode_no}"
+        if self.is_opted_out(episode_key):
+            raise DoNotCallError(f"{episode_key} opted out — no call artifact produced")
+        if self.writer is None:
+            raise VoiceChannelUnavailable(
+                f"{episode_key}: no script writer configured — voice channel unavailable"
+            )
         brief = self.brief(episode)
         ctx: dict[str, Any] = {
             "customer_name": customer_name,
@@ -59,13 +109,14 @@ class VoiceNode:
             "payment_url": payment_url,
             "attempt_no": brief["failed_attempts"],
         }
-        script = self.writer.write(ctx)  # writers safety-gate internally
+        script = self.writer.write(ctx)  # writers gate their own output (raise on fail)
         report = validate_script(script.text, merchant_name=self.merchant_name)
         if not report.ok:
-            # strict DR12 gate failed (e.g. LLM forgot the opt-out) → always-safe template
-            script = TemplateScriptWriter().write(ctx)
+            # Fail-loud: the strict DR12 gate was bypassed by a writer. Never ship the
+            # text and never silently swap in the template — raise for human review.
+            raise ScriptSafetyError("; ".join(report.violations))
         call = VoiceCall(
-            episode_key=f"{episode.subscription_id}:{episode.episode_no}",
+            episode_key=episode_key,
             merchant_name=self.merchant_name,
             customer_name=customer_name,
             script_hinglish=script.text,
@@ -73,7 +124,21 @@ class VoiceNode:
             audio_path=None,
             created_at=dt.datetime.now(dt.UTC),
         )
+        if self.tts is not None:
+            call = self._render_audio(call)
         self.calls.append(call)
+        return call
+
+    def _render_audio(self, call: VoiceCall) -> VoiceCall:
+        """Render the approved script to audio; failure degrades to audio_path=None."""
+        try:
+            out = Path("data/audio") / f"{call.episode_key.replace(':', '_')}.mp3"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            rendered = self.tts.render(call.script_hinglish, out) if self.tts else None
+            if rendered is not None:
+                return call.model_copy(update={"audio_path": str(rendered)})
+        except Exception:  # noqa: BLE001, S110 — a TTS failure must never break a recovery
+            return call  # degraded: audio_path stays None, call remains safe
         return call
 
     def brief(self, episode: EpisodeView) -> dict[str, Any]:
@@ -108,7 +173,11 @@ def make_voice_node(
     merchant_name: str,
     writer: ScriptWriter | None = None,
 ) -> Callable[[EpisodeView, str, str], VoiceCall]:
-    """Factory for graph wiring: returns a plain make_call closure."""
+    """Factory for graph wiring: returns a plain make_call closure.
+
+    writer=None ⇒ the closure raises VoiceChannelUnavailable (fail-loud); pass
+    TemplateScriptWriter() explicitly for the deterministic reference channel.
+    """
     node = VoiceNode(merchant_name=merchant_name, writer=writer)
 
     def _make(episode: EpisodeView, customer_name: str, payment_url: str) -> VoiceCall:

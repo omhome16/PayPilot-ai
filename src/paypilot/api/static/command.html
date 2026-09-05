@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>PayPilot — Command Center</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/command.css">
+</head>
+<body>
+<div class="shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">₹</span>
+      <div class="brand-text">
+        <div class="brand-name">PAYPILOT</div>
+        <div class="brand-sub">command center · revenue recovery</div>
+      </div>
+    </div>
+    <div class="top-status" id="top-status"></div>
+  </header>
+
+  <nav class="rail" id="rail" aria-label="Panels">
+    <button class="nav active" data-panel="overview"><span class="nav-ico">◈</span>Overview</button>
+    <button class="nav" data-panel="live"><span class="nav-ico">⚡</span>Live recovery</button>
+    <button class="nav" data-panel="graph"><span class="nav-ico">◎</span>Agent graph</button>
+    <button class="nav" data-panel="voice"><span class="nav-ico">◉</span>Voice studio</button>
+    <button class="nav" data-panel="memory"><span class="nav-ico">▤</span>Memory / DB</button>
+    <button class="nav" data-panel="ledger"><span class="nav-ico">≡</span>Ledger</button>
+    <button class="nav" data-panel="eval"><span class="nav-ico">◔</span>Eval</button>
+    <button class="nav" data-panel="lab"><span class="nav-ico">⌗</span>Webhook lab</button>
+  </nav>
+
+  <main id="main">
+
+    <!-- ============ OVERVIEW ============ -->
+    <section class="panel active" id="panel-overview">
+      <div class="panel-head">
+        <h1>The recovery desk</h1>
+        <p class="lede">One agent, four channels, every decision audited. Fire a failure below and watch
+        the whole machine react — or go panel by panel.</p>
+      </div>
+      <div class="kpi-row" id="ov-kpis"></div>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Run the demo pack</h2>
+          <p class="muted">Fires three signed <code>payment.failed</code> events — a fresh cash-crunch, a
+          revoked mandate, and a big-ticket third failure — then opens the live feed.</p>
+          <div class="actions">
+            <button class="btn primary" id="ov-demo-pack">Fire the demo pack</button>
+            <button class="btn" onclick="go('voice')">Open voice studio →</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>What is real here</h2>
+          <ul class="legend">
+            <li><span class="dot ok"></span><b>Real code path</b> — webhook signature, agent decision, guardrails, store, tool calls all execute for real.</li>
+            <li><span class="dot sim"></span><b>Simulated world</b> — failures and outcomes come from a seeded synthetic population, not live payments.</li>
+            <li><span class="dot out"></span><b>Live LLM</b> — voice scripts &amp; conversations use OpenRouter when a key is set; otherwise they fail loud to human review.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Sub-systems</h2>
+        <div id="ov-systems" class="systems"></div>
+      </div>
+    </section>
+
+    <!-- ============ LIVE RECOVERY ============ -->
+    <section class="panel" id="panel-live">
+      <div class="panel-head">
+        <h1>Live recovery feed</h1>
+        <p class="lede">Every card is a signed <code>payment.failed</code> webhook the agent actually
+        processed: diagnose → decide within hard rails → act (or escalate loudly).</p>
+      </div>
+      <div class="row">
+        <button class="btn" onclick="sim('fresh_funds')">Cash-crunch (₹499)</button>
+        <button class="btn" onclick="sim('revoked')">Mandate revoked (₹999)</button>
+        <button class="btn" onclick="sim('voice')">3rd failure big-ticket (₹1,500)</button>
+      </div>
+      <div class="kpi-row slim" id="live-kpis"></div>
+      <div id="live-stream"></div>
+    </section>
+
+    <!-- ============ AGENT GRAPH ============ -->
+    <section class="panel" id="panel-graph">
+      <div class="panel-head">
+        <h1>Agent graph — one episode, node by node</h1>
+        <p class="lede">A real LangGraph run of the reference doctrine brain. Pick a failure and watch
+        SENSE → THINK → VALIDATE → ACT fire, with the actual state at each node.</p>
+      </div>
+      <div class="card">
+        <div class="row">
+          <label>Mode
+            <select id="g-mode">
+              <option value="insufficient_funds">insufficient_funds</option>
+              <option value="mandate_revoked">mandate_revoked</option>
+              <option value="limit_exceeded">limit_exceeded</option>
+              <option value="bank_downtime">bank_downtime</option>
+            </select>
+          </label>
+          <label>Amount ₹ <input id="g-amount" type="number" value="1500" step="1"></label>
+          <label>Attempt <input id="g-attempt" type="number" value="3" min="1" max="5"></label>
+          <label class="check"><input id="g-outage" type="checkbox"> Simulate brain outage (fail-loud)</label>
+          <button class="btn primary" id="g-run">Run the trace</button>
+        </div>
+      </div>
+      <div class="rail-diagram" id="g-rail"></div>
+      <div id="g-steps"></div>
+    </section>
+
+    <!-- ============ VOICE STUDIO ============ -->
+    <section class="panel" id="panel-voice">
+      <div class="panel-head">
+        <h1>Voice studio — a call that listens</h1>
+        <p class="lede">Two-way Hinglish conversation. The agent retrieves the customer's real history
+        from the database, speaks, listens, and acts — pay-now link, salary-timed retry, cancel, or human.</p>
+      </div>
+      <div class="grid-voice">
+        <div class="card">
+          <div class="row" id="v-setup">
+            <label>Customer
+              <select id="v-customer"></select>
+            </label>
+            <label>Scenario
+              <select id="v-scenario">
+                <option value="isf:49900">fresh crunch · ₹499</option>
+                <option value="isf:99900">fresh crunch · ₹999</option>
+                <option value="revoked:49900">mandate revoked · win-back</option>
+                <option value="downtime:199900">bank downtime · big ticket</option>
+              </select>
+            </label>
+            <button class="btn primary" id="v-start">Start call</button>
+          </div>
+          <div id="v-call" class="call"></div>
+          <div class="voice-input" id="v-input"></div>
+          <div id="v-status" class="call-status"></div>
+        </div>
+        <div class="card">
+          <h2>The agent's context</h2>
+          <div id="v-knows" class="vknows"><p class="muted">Start a call — tool queries will stream here.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MEMORY / DB ============ -->
+    <section class="panel" id="panel-memory">
+      <div class="panel-head">
+        <h1>Memory — the agent's database</h1>
+        <p class="lede">SQLite, live. Tables hold everything the agent knows; every tool call it makes
+        streams in below. This is the context the LLM actually reasons over.</p>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Tables</h2>
+          <div id="mem-tables" class="memtables"></div>
+        </div>
+        <div class="card">
+          <h2>Browse rows</h2>
+          <div id="mem-browser"><p class="muted">Pick a table.</p></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Live tool-call stream</h2>
+        <div id="mem-tools" class="toolstream"></div>
+      </div>
+    </section>
+
+    <!-- ============ LEDGER ============ -->
+    <section class="panel" id="panel-ledger">
+      <div class="panel-head">
+        <h1>Decision ledger</h1>
+        <p class="lede">Append-only audit of every recovery decision — including the loud escalations.
+        Nothing runs off-ledger.</p>
+      </div>
+      <div class="row">
+        <label>Show
+          <select id="l-filter">
+            <option value="all">all decisions</option>
+            <option value="degraded">only degraded / fail-loud</option>
+            <option value="escalation">only human escalations</option>
+          </select>
+        </label>
+      </div>
+      <div id="ledger-table" class="table-wrap"></div>
+    </section>
+
+    <!-- ============ EVAL ============ -->
+    <section class="panel" id="panel-eval">
+      <div class="panel-head">
+        <h1>Measured claims</h1>
+        <p class="lede">Every number here is generated by running both arms on identical seeded worlds —
+        never hand-written. The re-run button proves it live.</p>
+      </div>
+      <div class="card">
+        <div class="row">
+          <button class="btn primary" id="ev-run">Re-run the sweep (5 worlds)</button>
+          <span id="ev-progress" class="muted"></span>
+        </div>
+        <div id="ev-results" class="eval-results"></div>
+        <ul class="legend">
+          <li><span class="dot ok"></span><b>Agent arm</b> — PayPilot policy + guardrails on a reference doctrine brain (deterministic).</li>
+          <li><span class="dot base"></span><b>Baseline arm</b> — the fair-naive retry policy on the identical world.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ WEBHOOK LAB ============ -->
+    <section class="panel" id="panel-lab">
+      <div class="panel-head">
+        <h1>Webhook lab</h1>
+        <p class="lede">Compose any failure, fire it through the signed receiver, and see exactly what the
+        merchant's system would get back.</p>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <form id="lab-form" class="form">
+            <label>Failure mode
+              <select name="mode">
+                <option value="insufficient_funds">insufficient_funds</option>
+                <option value="mandate_revoked">mandate_revoked</option>
+                <option value="limit_exceeded">limit_exceeded</option>
+                <option value="auth_timeout">auth_timeout</option>
+                <option value="bank_downtime">bank_downtime</option>
+              </select>
+            </label>
+            <label>Amount ₹ <input name="amount" type="number" value="199900" step="1"></label>
+            <label>Attempt number <input name="attempt" type="number" value="2" min="1"></label>
+            <label>Subscription id <input name="sub" type="text" value="sub_lab_42"></label>
+            <label>Customer name <input name="name" type="text" value="Rohit"></label>
+            <button class="btn primary" type="submit">Fire signed webhook</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Response</h2>
+          <div id="lab-response" class="mono"><p class="muted">Nothing fired yet.</p></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<footer class="foot">
+  <span class="muted">demo world: seeded synthetic population · test-mode keys only · no real money moves</span>
+</footer>
+<script src="/static/command.js"></script>
+</body>
+</html>
