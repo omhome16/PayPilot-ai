@@ -1,137 +1,129 @@
-# PayPilot.AI 🛩️
+# PayPilot.AI
 
-**Autopilot for subscription payment recovery — built for Razorpay's AI Builder Buildathon (Track 3: AI Revenue Recovery).**
+**Autopilot for subscription payment recovery — built for the Razorpay AI Builder Buildathon (Track 3: AI Revenue Recovery).**
 
 > Indian subscription businesses lose 8–15% of monthly revenue to failed auto-debit mandates
 > (vs 3–6% globally). Naive retry policies recover 20–35%. Full-stack dunning recovers 65–75%.
-> PayPilot is the agentic layer that closes that gap — with every money action explainable, bounded, and audited.
+> PayPilot is the agentic layer that closes that gap — every decision made live by an LLM,
+> bounded by unbreakable compliance rails, and fully audited.
 
 ## What it does
 
 ```
-payment.failed webhook ──▶ DIAGNOSE (LLM + rules classify the failure mode)
-                              │
-                              ▼
-                          DECIDE (pick intervention within hard compliance gates)
-                              │  gates: retry caps · quiet hours · contact budgets · exposure caps
-                              ▼
-                          ACT (smart retry · payment link · Hinglish voice nudge · human escalation)
-                              │
-                              ▼
-                          MEASURE (control arm vs agent arm: ₹ recovered across a batch)
+payment.failed webhook ──▶ SENSE   (retrieve customer context from SQLite via audited tool calls)
+                               │
+                               ▼
+                           THINK   (live LLM brain proposes ONE next move as strict JSON)
+                               │
+                               ▼
+                           VALIDATE (hard rails dispose: consent law, touch budgets,
+                                     ₹ thresholds, 21-day horizon — unbreakable)
+                               │
+                               ▼
+                           ACT     (smart retry · payment link · Hinglish voice call · human escalation)
+                               │
+                               ▼
+                           PROVE   (every decision on an append-only ledger; every number measured)
 ```
 
-## Status
+## Live demo (2 minutes)
 
-Phases 0–9 complete (see `learning/` journal for the full build narrative).
-
-| Phase | Deliverable | Status |
-|---|---|---|
-| 0 | Repo scaffold + Razorpay test-mode spike | ✅ |
-| 1 | Synthetic corpus + calibrated failure simulator | ✅ |
-| 2 | Fair-naive baseline arm + RunEngine referee — **benchmark: 26.7% episodes, ₹8,317** | ✅ |
-| 3 | Agent core + head-to-head — **5.6× baseline rupees, zero violations** | ✅ |
-| 4 | Agentic graph: LLM brain behind guardrails · record/replay · live Payment Links · 20-world stability (**85% win-rate, mean 2.42×**) | ✅ |
-| 5 | Hinglish voice module | ✅ one-way calls **and two-way conversations**: turn loop, LLM dialogue brain, mid-call opt-out, executable outcomes (`voice/conversation.py`); telephony/STT pluggable later |
-| 6 | Eval harness + measured report | ✅ `EVAL_REPORT.md` — 20 worlds, 85% win-rate, 2.42× mean, measured zero violations |
-| 7 | Dashboard | ✅ **PayPilot Command Center** at `/command` — 8 live panels (Overview, Live Recovery, Agent Graph, Voice Studio, Memory/DB, Ledger, Eval, Webhook Lab) |
-| 8 | Pitch video + submission | 🎬 script ready (`PITCH_SCRIPT.md`); honesty doc `LIMITATIONS.md` done |
-| 9 | Signed webhook receiver | ✅ `POST /webhooks/razorpay` — HMAC-verified `payment.failed` → agent decision |
-
-## Architecture
-
-```
- payment.failed ──► SENSE (retrieve context from SQLite via tool calls)
-                        │  lookup_customer · episode_history · recent_decisions
-                        │  consent_status · next_payday   (every call audited)
-                        ▼
-                    THINK (LLM brain proposes) ──► VALIDATE (hard rails, unbreakable)
-                        │                              │ approved / refused
-                        ▼                              ▼
-                    ACT (smart retry · payment link · voice · escalate)
-                        │
-                        ▼
-                    MEASURE (ledger + eval: control vs agent arm)
-   Demo surface: Command Center (/command) — every subsystem live on one screen
-```
-
-- **LLM proposes, rails dispose** — consent rules, touch budgets, ₹ thresholds and the
-  21-day horizon are unbreakable by construction
-- **The agent has real memory** — a SQLite store (`paypilot/store/`) persists customers,
-  consent, episodes, decisions, voice calls and an audited `tool_calls` trail; the LLM
-  brain retrieves context through `RecoveryTools` instead of being handed a static view
-- **Voice is two-way** — a bounded conversational turn loop with per-turn safety
-  validation, mid-call opt-out written straight to the store, and outcomes that
-  schedule real ledger actions (`voice/conversation.py`)
-- **Fail-loud, never silent** — an unavailable or unparseable LLM brain/writer raises;
-  the episode escalates to human review with a journaled, counted, dashboard-visible
-  `degraded` flag. Deterministic guardrails + the reference template brain stay as
-  designed components — determinism is not the enemy, silence is
-- **Record-once-replay-forever** — every agent decision is journaled; replays are
-  byte-identical, so measured results are AI-driven AND deterministic
-- **Multi-seed honest claims** — the agent wins 17/20 seeded worlds (mean 2.42× baseline);
-  loss-worlds are documented, not tuned away
-
-## Engineering principles
-
-1. **TDD or it didn't happen** — every behavior starts as a failing test
-2. **Strict types** (`mypy --strict`) and lint-clean (`ruff`) from day one — enforced locally before every commit
-3. **Bounded autonomy** — the agent can never violate a hard compliance gate, by construction
-4. **Measured honesty** — synthetic outcomes are calibrated to published rates and documented in
-   `SIMULATOR_ASSUMPTIONS.md`; limitations live in `LIMITATIONS.md`
-
-## Dev setup
+Prerequisites: Python 3.12+, `uv`, and a free OpenRouter key ([openrouter.ai/keys](https://openrouter.ai/keys)).
 
 ```bash
 cd paypilot
-uv sync                      # creates .venv, installs everything
-cp .env.example .env         # then paste your TEST-mode keys
-uv run pytest                # tests
-uv run ruff check .          # lint
-uv run mypy src              # types
-```
-
-Optional: real TTS audio for approved call scripts (free, keyless edge-tts):
-
-```bash
-uv sync --extra tts                       # install edge-tts
-uv run paypilot-tts "script text..." out.mp3   # render any script to audio
-```
-
-Regenerate the measured artifacts (deterministic, seeded):
-
-```bash
-uv run paypilot-eval         # re-runs the 20-world sweep → EVAL_REPORT.md
-uv run paypilot-dashboard    # re-runs the sweep → DASHBOARD.html
-uv run paypilot-live-eval    # OPTIONAL: real OpenRouter brain vs baseline + doctrine (needs OPENROUTER_API_KEY)
-```
-
-Run everything — then open the **PayPilot Command Center** at http://127.0.0.1:8000/command:
-
-```bash
+uv sync                       # creates .venv, installs everything
+cp .env.example .env          # then paste OPENROUTER_API_KEY + TEST-mode Razorpay keys
 uv run uvicorn paypilot.api.app:create_app --factory --port 8000
 ```
 
-### Navigating the demo (Command Center → /command)
+Open **http://127.0.0.1:8000/command** — one page, narrated top to bottom:
 
-| Panel | What you'll do there |
-|---|---|
-| **Overview** | KPI strip (webhooks, decisions, ₹ recovered, escalations, fail-loud alerts) — "run the demo" scenario pack fires a full episode end-to-end |
-| **Live Recovery** | One-click failure scenarios (cash-crunch, revoked mandate, big-ticket 3rd failure); click any event card to drill into its decision trace |
-| **Agent Graph** | Watch SENSE → THINK → VALIDATE → ACT/ESCALATE light up live; tick "simulate LLM outage" to demo the fail-loud escalation path |
-| **Voice Studio** | Pick a seeded customer → start a two-way call → reply via **simulate / type / mic**; watch context get retrieved, replies safety-validated, and outcomes land in the ledger |
-| **Memory/DB** | Live SQLite browser — every table, and the `tool_calls` audit streaming in as the agent queries |
-| **Ledger** | Append-only audit of every decision, filterable by episode |
-| **Eval** | Headline numbers + a "quick sweep" re-run button |
-| **Webhook Lab** | Compose any signed `payment.failed` → watch HMAC verify → see the decision |
+| Step | What to do | What you'll see |
+|---|---|---|
+| **Start** | "Fire the demo pack" | Three signed `payment.failed` webhooks enter the real pipeline |
+| **1 · Fire** | Watch the cards stream in | Live LLM action + reason per event; `Thinking ↓` jumps to its trace, `▶ Hindi audio` plays the neural Hindi call script |
+| **2 · Decide** | Watch SENSE → THINK → VALIDATE → ACT light up | The actual LangGraph state at each node — the LLM's proposal, the rails' verdict |
+| **3 · Speak** | Start a call, reply as the customer (simulate / type / mic) | Retrieved history, safety-validated Hinglish replies, executable outcomes (pay link, salary-timed retry, cancel, human) |
+| **4 · Prove** | Ledger (auto-filtered to the episode) + Memory tables | The audit trail and the exact context the LLM reasoned over, including every tool call |
+| **5 · Scale** | Re-run the sweep; fire your own failure in the Webhook Lab | Measured numbers, then a custom signed webhook through HMAC verification to decision |
 
-Other endpoints: `/monitor` (original live feed + spoken call scripts), `/health`,
-`POST /webhooks/razorpay` (signed), voice conversation API
-(`GET /voice/demo`, `POST /voice/open`, `POST /voice/turn`), store browser
-(`GET /store/tables`, `GET /store/rows`).
+> The product is **LLM-only**: the server refuses to start without `OPENROUTER_API_KEY`.
+> The default model is a free tier (`nvidia/nemotron-3-super-120b-a12b:free`) verified to emit
+> strict JSON. A brain outage never fakes a decision — the episode escalates loudly to human
+> review with a `degraded` flag on every surface.
 
-> 💡 **Demo tip:** live voice (calls + conversations) needs `OPENROUTER_API_KEY`;
-> without it the Voice Studio demonstrates the honest fail-loud escalation instead of
-> faking a script. Everything else runs keyless.
->
-> ⚠️ Test-mode keys only. `.env` is gitignored and must never be committed.
+## Architecture
+
+- **LLM proposes, rails dispose** — the OpenRouter brain (SENSE → THINK → VALIDATE → ACT
+  via LangGraph) decides; `StandardGuardrails` veto anything unlawful and substitute a safe
+  fallback. No scripted decision path exists in the product code (fakes live only in tests
+  as injected seams, and in the labeled doctrine-replay benchmark).
+- **Real memory** — SQLite holds customers, consent, episodes, decisions, voice calls and an
+  audited `tool_calls` trail; the brain retrieves context through `RecoveryTools`, never a
+  static view (`src/paypilot/store/`).
+- **Two-way Hinglish voice** — a bounded turn loop (`voice/conversation.py`): deterministic
+  intent tagging on input, live LLM dialogue brain, per-turn safety gates, mid-call opt-out
+  written straight to the store. Playback is an explicit `hi-IN` voice in-browser, plus
+  server-rendered neural Hindi audio (`POST /voice/audio`, needs `uv sync --extra tts`).
+- **Record-once-replay-forever** — every decision is journaled (`GraphPolicy.journal`);
+  replays serve byte-identical proposals without touching the network.
+
+## Measured results (honest labels)
+
+- **Doctrine-replay benchmark** (`EVAL_REPORT.md`): 20 seeded worlds, agent wins **85%**,
+  mean **2.42×** baseline rupees, **zero** compliance violations. Deterministic and
+  reproducible — this is the reference policy, not the live LLM.
+- **Live LLM brain** (`uv run paypilot-live-eval`, needs the key): the real OpenRouter brain
+  through the same rails, journaled per world and replayable. Non-deterministic by nature;
+  the journals make every claim checkable.
+
+Loss-worlds are shown unedited — nothing was tuned against specific seeds. Assumptions and
+limits: `SIMULATOR_ASSUMPTIONS.md`, `LIMITATIONS.md`.
+
+## Configuration (`.env`)
+
+| Key | Required | Notes |
+|---|---|---|
+| `OPENROUTER_API_KEY` | yes | Server refuses to start without it |
+| `OPENROUTER_MODEL` | no | Default is a verified free tier; any OpenRouter chat model works |
+| `OPENROUTER_TIMEOUT_S` | no | Default 90s — free-tier reasoning models think before answering |
+| `RZP_KEY_ID` / `RZP_KEY_SECRET` | yes | **Test-mode only** (`rzp_test_…` enforced at startup) |
+| `RZP_WEBHOOK_SECRET` | yes | HMAC verification for `POST /webhooks/razorpay` |
+| `MERCHANT_NAME` | no | Spoken in voice scripts (default `PayPilot`) |
+
+`.env` is gitignored and must never be committed.
+
+## Commands
+
+```bash
+uv run pytest                # tests (hermetic — dummy keys, injected fake brains, no network)
+uv run ruff check .          # lint
+uv run mypy src              # strict types
+uv run paypilot-eval         # 20-world sweep → EVAL_REPORT.md (deterministic)
+uv run paypilot-dashboard    # sweep → DASHBOARD.html
+uv run paypilot-live-eval    # live LLM brain vs baseline + doctrine (needs key)
+uv run paypilot-tts "text" out.mp3   # Hindi neural TTS render (needs --extra tts)
+```
+
+API surface: `/command` (dashboard; `/` and `/monitor` redirect here), `POST /webhooks/razorpay`
+(signed), `POST /monitor/simulate`, `POST /monitor/fire`, `POST /agent/trace`,
+`GET /voice/demo`, `POST /voice/open`, `POST /voice/turn`, `POST /voice/audio`,
+`GET /store/tables`, `GET /store/rows`, `POST /eval/quick`, `GET /health`.
+
+## Repo layout
+
+```
+src/paypilot/
+  api/          # FastAPI app + Command Center SPA (static/)
+  graph/        # LangGraph SENSE→THINK→VALIDATE→ACT, LLM brain, guardrails, replay
+  engine/       # baselines, runner/referee, narration layer
+  voice/        # two-way conversations, Hinglish writers, safety, TTS
+  store/        # SQLite memory + audited recovery tools
+  simulator/    # calibrated synthetic population / failures / outcomes
+  eval/         # multi-seed sweeps, reports, live-LLM eval
+```
+
+## License
+
+MIT — see `LICENSE`.

@@ -1,7 +1,9 @@
 """GraphPolicy: runs the SENSE→THINK→VALIDATE→ACT loop inside the engine's Policy socket.
 
-This is the Phase-4 agent. The brain (LLM in LIVE, FakeBrain in tests/replay) proposes;
-guardrails dispose; every decision and override is journaled for record/replay.
+This is the Phase-4 agent. The brain (OpenRouterBrain in LIVE mode, FakeBrain in
+tests/replay — always passed explicitly) proposes; guardrails dispose; every
+decision and override is journaled for record/replay. There is NO default brain:
+a missing brain is a wiring bug, not something to silently script.
 
 Fail-loud: a brain that cannot propose (BrainUnavailable) NEVER degrades to a
 deterministic guess. The episode is escalated to human ops review and the failure
@@ -16,7 +18,7 @@ from paypilot.domain.calendar import ist_date_of, next_salary_date
 from paypilot.domain.enums import Intervention
 from paypilot.engine.agent import HARD_STOP_DAYS
 from paypilot.engine.policy import EpisodeView, ProposedAction
-from paypilot.graph.brain import Brain, BrainProposal, BrainState, FakeBrain
+from paypilot.graph.brain import Brain, BrainProposal, BrainState
 from paypilot.graph.guardrails import (
     GuardrailReport,
     Guardrails,
@@ -44,12 +46,12 @@ class GraphPolicy:
 
     def __init__(
         self,
-        brain: Brain | None = None,
+        brain: Brain,
         guardrails: Guardrails | None = None,
         wait_budget_per_episode: int = 1,
         hard_stop_days: int = HARD_STOP_DAYS,
     ) -> None:
-        self.brain: Brain = brain or FakeBrain()
+        self.brain: Brain = brain  # required — no scripted fallback, by construction
         self.guardrails: Guardrails = guardrails or StandardGuardrails()
         self.wait_budget = wait_budget_per_episode
         self.hard_stop_days = hard_stop_days

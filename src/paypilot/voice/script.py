@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from paypilot.llm import ChatClient, parse_json_object
+from paypilot.llm import DEFAULT_TIMEOUT_S, ChatClient, LLMCallError, parse_json_object
 from paypilot.voice.safety import hard_block_problems
 
 _WORDS_PER_SECOND = 2.5
@@ -125,9 +125,10 @@ class LLMScriptWriter:
     """LLM-written scripts (OpenRouter-compatible), fail-loud on any failure.
 
     On a network/API failure or unparseable output the writer raises
-    VoiceWriterUnavailable; on unsafe output (threats, missing amount/link,
-    over-length) validate_script_safety raises ScriptSafetyError. No silent
-    template substitution — the caller escalates the call to a human instead.
+    VoiceWriterUnavailable carrying the provider's own error detail; on unsafe
+    output (threats, missing amount/link, over-length) validate_script_safety
+    raises ScriptSafetyError. No silent template substitution — the caller
+    escalates the call to a human instead.
     """
 
     def __init__(
@@ -135,10 +136,15 @@ class LLMScriptWriter:
         api_key: str,
         model: str,
         base_url: str = "https://openrouter.ai/api/v1",
+        timeout: float = DEFAULT_TIMEOUT_S,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._client = ChatClient(
-            api_key=api_key, model=model, base_url=base_url, transport=transport
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+            transport=transport,
         )
         self.calls = 0
         self.tokens_used = 0
@@ -149,10 +155,13 @@ class LLMScriptWriter:
             {"role": "system", "content": _PROMPT_VOICE_V1},
             {"role": "user", "content": json.dumps(ctx)},
         ]
-        content, _ = self._client.complete(messages, temperature=0.4, max_tokens=250)
+        try:
+            content, _ = self._client.complete(messages, temperature=0.4, max_tokens=1000)
+        except LLMCallError as exc:
+            raise VoiceWriterUnavailable(f"LLM script writer call failed — {exc}") from exc
         self.tokens_used = self._client.tokens_used
         if content is None:
-            raise VoiceWriterUnavailable("LLM script writer call failed (network/API)")
+            raise VoiceWriterUnavailable("LLM script writer returned empty content")
         parsed = self._parse(content)
         if parsed is None:
             raise VoiceWriterUnavailable("LLM script output unparseable")

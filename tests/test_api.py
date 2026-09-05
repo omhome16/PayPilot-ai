@@ -2,6 +2,9 @@
 
 The product front door — a forged or unsigned webhook never reaches the agent,
 and every payment.failed event produces the same decision the simulator would.
+
+Hermetic: dummy OPENROUTER key + injected FakeBrain policy + no-network voice,
+so these tests never touch the live LLM (see test_live_eval for the real brain).
 """
 
 import hashlib
@@ -12,7 +15,11 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from paypilot.api import create_app
+from paypilot.domain.enums import Intervention
+from paypilot.graph.brain import BrainProposal, FakeBrain
+from paypilot.graph.policy_adapter import GraphPolicy
 from paypilot.settings import Settings
+from paypilot.voice.node import VoiceNode
 
 _SECRET = "whsec_test_abc"  # noqa: S105 — fixture value, not a credential
 
@@ -22,11 +29,39 @@ def _settings() -> Settings:
         rzp_key_id="rzp_test_key",
         rzp_key_secret="rzp_test_secret",  # noqa: S106 — fixture value, not a credential
         rzp_webhook_secret=_SECRET,
+        openrouter_api_key="sk-test-dummy",  # noqa: S106 — fixture value, never sent
+        openrouter_model="test-model",
+        _env_file=None,  # hermetic: never read the developer's real .env key
     )
 
 
+def _fake_strategist(state: dict[str, Any]) -> BrainProposal:
+    """Deterministic test doctrine (mirrors the labeled benchmark, no network)."""
+    mode = state.get("mode", "")
+    if mode in ("mandate_revoked", "limit_exceeded"):
+        return BrainProposal(
+            action=Intervention.PAYMENT_LINK, days_ahead=1, reason="test: win-back link"
+        )
+    if int(state.get("attempts", 1)) >= 3 and float(state.get("amount_rupees", 0)) >= 1000:
+        return BrainProposal(
+            action=Intervention.VOICE_NUDGE, days_ahead=2, reason="test: voice touch"
+        )
+    return BrainProposal(
+        action=Intervention.SMART_RETRY, on_salary_day=True, reason="test: timed retry"
+    )
+
+
+def _policy() -> GraphPolicy:
+    return GraphPolicy(brain=FakeBrain(fn=_fake_strategist))
+
+
+def _voice_none() -> VoiceNode:
+    """No script capacity — voice decisions fail loud (no network)."""
+    return VoiceNode(merchant_name="PayPilot", writer=None)
+
+
 def _client() -> TestClient:
-    return TestClient(create_app(settings=_settings()))
+    return TestClient(create_app(settings=_settings(), policy=_policy(), voice=_voice_none()))
 
 
 def _signed_headers(body: bytes) -> dict[str, str]:
@@ -119,7 +154,7 @@ def test_zero_amount_maps_to_422() -> None:
 
 
 def test_voice_decision_escalates_loudly_without_llm_writer() -> None:
-    """Fail-loud: no OPENROUTER key ⇒ no script writer ⇒ a VOICE_NUDGE decision
+    """Fail-loud: VoiceNode with writer=None ⇒ a VOICE_NUDGE decision
     escalates to human_escalation with a degraded flag — never a canned script."""
     payload = _failure_payload(attempt_no=3)
     payload["payload"]["payment"]["entity"]["amount"] = 150_000
@@ -128,7 +163,7 @@ def test_voice_decision_escalates_loudly_without_llm_writer() -> None:
     data = r.json()
     assert data["action"] == "human_escalation"
     assert data["degraded"]["channel"] == "voice"
-    assert "OPENROUTER" in data["degraded"]["reason"]
+    assert "writer" in data["degraded"]["reason"].lower() or "OPENROUTER" in data["degraded"]["reason"]
     vc = data["voice_call"]
     assert vc["escalated"] is True
     assert "script" not in vc  # no substitute script was fabricated
@@ -139,7 +174,6 @@ def test_voice_decision_llm_writer_produces_script(monkeypatch) -> None:
     ships the LLM-written, safety-validated script."""
     import httpx
 
-    from paypilot.engine.agent import AgentPolicy
     from paypilot.voice.node import VoiceNode
     from paypilot.voice.script import LLMScriptWriter
 
@@ -163,7 +197,7 @@ def test_voice_decision_llm_writer_produces_script(monkeypatch) -> None:
 
     writer = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
     voice = VoiceNode(merchant_name="StreamFlix", writer=writer)
-    c = TestClient(create_app(settings=_settings(), policy=AgentPolicy(), voice=voice))
+    c = TestClient(create_app(settings=_settings(), policy=_policy(), voice=voice))
 
     payload = _failure_payload(attempt_no=3, customer_name="Rohit")
     payload["payload"]["payment"]["entity"]["amount"] = 150_000
@@ -182,7 +216,6 @@ def test_voice_decision_escalates_when_llm_writer_fails(monkeypatch) -> None:
     review with a loud degraded flag (no template substitution)."""
     import httpx
 
-    from paypilot.engine.agent import AgentPolicy
     from paypilot.voice.node import VoiceNode
     from paypilot.voice.script import LLMScriptWriter
 
@@ -196,7 +229,7 @@ def test_voice_decision_escalates_when_llm_writer_fails(monkeypatch) -> None:
 
     writer = LLMScriptWriter(api_key="k", model="m", transport=httpx.MockTransport(handler))
     voice = VoiceNode(merchant_name="StreamFlix", writer=writer)
-    c = TestClient(create_app(settings=_settings(), policy=AgentPolicy(), voice=voice))
+    c = TestClient(create_app(settings=_settings(), policy=_policy(), voice=voice))
 
     payload = _failure_payload(attempt_no=3)
     payload["payload"]["payment"]["entity"]["amount"] = 150_000
@@ -217,7 +250,7 @@ def test_monitor_page_renders() -> None:
 
 def test_monitor_simulate_scenarios_drive_the_agent() -> None:
     c = _client()
-    # no OPENROUTER key ⇒ the voice scenario FAILS LOUD to human escalation
+    # voice writer=None ⇒ the voice scenario FAILS LOUD to human escalation
     expected = {
         "fresh_funds": "smart_retry",
         "revoked": "payment_link",

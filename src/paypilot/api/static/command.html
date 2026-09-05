@@ -24,15 +24,13 @@
     <div class="top-status" id="top-status"></div>
   </header>
 
-  <nav class="rail" id="rail" aria-label="Panels">
-    <button class="nav active" data-panel="overview"><span class="nav-ico">◈</span>Overview</button>
-    <button class="nav" data-panel="live"><span class="nav-ico">⚡</span>Live recovery</button>
-    <button class="nav" data-panel="graph"><span class="nav-ico">◎</span>Agent graph</button>
-    <button class="nav" data-panel="voice"><span class="nav-ico">◉</span>Voice studio</button>
-    <button class="nav" data-panel="memory"><span class="nav-ico">▤</span>Memory / DB</button>
-    <button class="nav" data-panel="ledger"><span class="nav-ico">≡</span>Ledger</button>
-    <button class="nav" data-panel="eval"><span class="nav-ico">◔</span>Eval</button>
-    <button class="nav" data-panel="lab"><span class="nav-ico">⌗</span>Webhook lab</button>
+  <nav class="rail" id="rail" aria-label="Demo steps">
+    <button class="nav active" data-panel="overview"><span class="step-n">Start</span>Overview</button>
+    <button class="nav" data-panel="live"><span class="step-n">1</span>Fire</button>
+    <button class="nav" data-panel="graph"><span class="step-n">2</span>Decide</button>
+    <button class="nav" data-panel="voice"><span class="step-n">3</span>Speak</button>
+    <button class="nav" data-panel="ledger"><span class="step-n">4</span>Prove</button>
+    <button class="nav" data-panel="eval"><span class="step-n">5</span>Scale</button>
   </nav>
 
   <main id="main">
@@ -40,6 +38,7 @@
     <!-- ============ OVERVIEW ============ -->
     <section class="panel active" id="panel-overview">
       <div class="panel-head">
+        <div class="step-eyebrow">Start here · the whole recovery story on one page</div>
         <h1>The recovery desk</h1>
         <p class="lede">One agent, four channels, every decision audited. Fire a failure below and watch
         the whole machine react — or go panel by panel.</p>
@@ -60,7 +59,7 @@
           <ul class="legend">
             <li><span class="dot ok"></span><b>Real code path</b> — webhook signature, agent decision, guardrails, store, tool calls all execute for real.</li>
             <li><span class="dot sim"></span><b>Simulated world</b> — failures and outcomes come from a seeded synthetic population, not live payments.</li>
-            <li><span class="dot out"></span><b>Live LLM</b> — voice scripts &amp; conversations use OpenRouter when a key is set; otherwise they fail loud to human review.</li>
+            <li><span class="dot out"></span><b>Live LLM</b> — every decision, call script and conversation reply is generated live by the LLM brain. A brain outage escalates loudly to human review; nothing is scripted.</li>
           </ul>
         </div>
       </div>
@@ -73,6 +72,7 @@
     <!-- ============ LIVE RECOVERY ============ -->
     <section class="panel" id="panel-live">
       <div class="panel-head">
+        <div class="step-eyebrow">Step 1 · Fire — a payment fails</div>
         <h1>Live recovery feed</h1>
         <p class="lede">Every card is a signed <code>payment.failed</code> webhook the agent actually
         processed: diagnose → decide within hard rails → act (or escalate loudly).</p>
@@ -81,6 +81,7 @@
         <button class="btn" onclick="sim('fresh_funds')">Cash-crunch (₹499)</button>
         <button class="btn" onclick="sim('revoked')">Mandate revoked (₹999)</button>
         <button class="btn" onclick="sim('voice')">3rd failure big-ticket (₹1,500)</button>
+        <span id="live-pending" class="muted"></span>
       </div>
       <div class="kpi-row slim" id="live-kpis"></div>
       <div id="live-stream"></div>
@@ -89,8 +90,10 @@
     <!-- ============ AGENT GRAPH ============ -->
     <section class="panel" id="panel-graph">
       <div class="panel-head">
+        <div class="step-eyebrow">Step 2 · Decide — the brain reasons, the rails dispose</div>
         <h1>Agent graph — one episode, node by node</h1>
-        <p class="lede">A real LangGraph run of the reference doctrine brain. Pick a failure and watch
+        <p class="lede">A real LangGraph run of the LIVE LLM brain. Press <b>Thinking ↓</b> on any
+        Step&nbsp;1 card to trace that exact event — or run your own below — and watch
         SENSE → THINK → VALIDATE → ACT fire, with the actual state at each node.</p>
       </div>
       <div class="card">
@@ -108,6 +111,7 @@
           <label class="check"><input id="g-outage" type="checkbox"> Simulate brain outage (fail-loud)</label>
           <button class="btn primary" id="g-run">Run the trace</button>
         </div>
+        <div id="g-context" class="g-context"><span class="muted">Nothing traced yet — press Thinking ↓ on a Step 1 card.</span></div>
       </div>
       <div class="rail-diagram" id="g-rail"></div>
       <div id="g-steps"></div>
@@ -116,6 +120,7 @@
     <!-- ============ VOICE STUDIO ============ -->
     <section class="panel" id="panel-voice">
       <div class="panel-head">
+        <div class="step-eyebrow">Step 3 · Speak — the call that listens</div>
         <h1>Voice studio — a call that listens</h1>
         <p class="lede">Two-way Hinglish conversation. The agent retrieves the customer's real history
         from the database, speaks, listens, and acts — pay-now link, salary-timed retry, cancel, or human.</p>
@@ -147,9 +152,33 @@
       </div>
     </section>
 
+    <!-- ============ LEDGER ============ -->
+    <section class="panel" id="panel-ledger">
+      <div class="panel-head">
+        <div class="step-eyebrow">Step 4 · Prove — nothing runs off-ledger</div>
+        <h1>Decision ledger</h1>
+        <p class="lede">Append-only audit of every recovery decision — including the loud escalations.
+        Nothing runs off-ledger.</p>
+      </div>
+      <div class="row">
+        <label>Show
+          <select id="l-filter">
+            <option value="all">all decisions</option>
+            <option value="degraded">only degraded / fail-loud</option>
+            <option value="escalation">only human escalations</option>
+          </select>
+        </label>
+        <label>Episode
+          <input id="l-episode" type="text" placeholder="e.g. sub_demo_voice:1" style="min-width:220px">
+        </label>
+      </div>
+      <div id="ledger-table" class="table-wrap"></div>
+    </section>
+
     <!-- ============ MEMORY / DB ============ -->
     <section class="panel" id="panel-memory">
       <div class="panel-head">
+        <div class="step-eyebrow">Step 4 · Prove — the context the LLM reasons over</div>
         <h1>Memory — the agent's database</h1>
         <p class="lede">SQLite, live. Tables hold everything the agent knows; every tool call it makes
         streams in below. This is the context the LLM actually reasons over.</p>
@@ -170,28 +199,10 @@
       </div>
     </section>
 
-    <!-- ============ LEDGER ============ -->
-    <section class="panel" id="panel-ledger">
-      <div class="panel-head">
-        <h1>Decision ledger</h1>
-        <p class="lede">Append-only audit of every recovery decision — including the loud escalations.
-        Nothing runs off-ledger.</p>
-      </div>
-      <div class="row">
-        <label>Show
-          <select id="l-filter">
-            <option value="all">all decisions</option>
-            <option value="degraded">only degraded / fail-loud</option>
-            <option value="escalation">only human escalations</option>
-          </select>
-        </label>
-      </div>
-      <div id="ledger-table" class="table-wrap"></div>
-    </section>
-
     <!-- ============ EVAL ============ -->
     <section class="panel" id="panel-eval">
       <div class="panel-head">
+        <div class="step-eyebrow">Step 5 · Scale — from one episode to every world</div>
         <h1>Measured claims</h1>
         <p class="lede">Every number here is generated by running both arms on identical seeded worlds —
         never hand-written. The re-run button proves it live.</p>
@@ -203,8 +214,9 @@
         </div>
         <div id="ev-results" class="eval-results"></div>
         <ul class="legend">
-          <li><span class="dot ok"></span><b>Agent arm</b> — PayPilot policy + guardrails on a reference doctrine brain (deterministic).</li>
+          <li><span class="dot ok"></span><b>Agent arm</b> — PayPilot policy + guardrails on a deterministic doctrine-replay brain (reproducible benchmark).</li>
           <li><span class="dot base"></span><b>Baseline arm</b> — the fair-naive retry policy on the identical world.</li>
+          <li><span class="dot out"></span><b>Live LLM numbers</b> — run <code>uv run paypilot-live-eval</code>; the real brain's decisions are journaled and replayable.</li>
         </ul>
       </div>
     </section>
@@ -212,6 +224,7 @@
     <!-- ============ WEBHOOK LAB ============ -->
     <section class="panel" id="panel-lab">
       <div class="panel-head">
+        <div class="step-eyebrow">Step 5 · Scale — fire your own failure</div>
         <h1>Webhook lab</h1>
         <p class="lede">Compose any failure, fire it through the signed receiver, and see exactly what the
         merchant's system would get back.</p>
@@ -228,7 +241,7 @@
                 <option value="bank_downtime">bank_downtime</option>
               </select>
             </label>
-            <label>Amount ₹ <input name="amount" type="number" value="199900" step="1"></label>
+            <label>Amount ₹ <input name="amount" type="number" value="1500" step="1"></label>
             <label>Attempt number <input name="attempt" type="number" value="2" min="1"></label>
             <label>Subscription id <input name="sub" type="text" value="sub_lab_42"></label>
             <label>Customer name <input name="name" type="text" value="Rohit"></label>

@@ -1,17 +1,22 @@
-"""HTTP layer: a signed Razorpay webhook receiver wired to the recovery agent —
+"""HTTP layer: a signed Razorpay webhook receiver wired to the LIVE LLM brain —
 plus a live monitor UI for demos.
 
 ``POST /webhooks/razorpay`` — verify the HMAC signature (X-Razorpay-Signature),
-map a ``payment.failed`` event onto a FailureEvent, consult the agent policy
-(deterministic ladder, optional LLM narration), and answer with the next
-recovery action. Voice decisions return the generated Hinglish call script AND
-the strategy brief behind it (history tone, days-to-salary, attempt, safety).
+map a ``payment.failed`` event onto a FailureEvent, and consult the recovery
+agent: an OpenRouter LLM brain (GraphPolicy SENSE→THINK→VALIDATE→ACT) whose
+proposals are bounded by unbreakable compliance rails. A brain outage escalates
+the episode to human review — never a scripted guess. Voice decisions return the
+generated Hinglish call script AND the strategy brief behind it.
 
 ``/monitor`` — a served demo console: fire realistic failure scenarios with one
 click (signed server-side), watch decisions stream in, and play the call aloud
 via the browser's speech synthesis. Everything downstream of the signature
 check is the same Policy/EpisodeView socket the simulator uses — one brain,
 two worlds.
+
+The product is LLM-only: without OPENROUTER_API_KEY the server refuses to start.
+Test seams (``policy``/``voice``/``brain``/``dialogue_brain``) exist for tests to
+inject scripted fakes — no fake brain ships in the product path.
 
 Settings keep the product test-mode-only by construction (see settings.py).
 """
@@ -21,24 +26,25 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from paypilot.domain.enums import FailureMode, Intervention, MandateRail
 from paypilot.domain.models import FailureEvent
-from paypilot.engine.agent import AgentPolicy, build_agent_policy
-from paypilot.engine.policy import EpisodeView
-from paypilot.eval.multiseed import run_multi_seed, scripted_strategist
-from paypilot.graph.brain import FakeBrain
+from paypilot.engine.policy import EpisodeView, ProposedAction
+from paypilot.eval.multiseed import run_multi_seed
+from paypilot.graph.brain import Brain
 from paypilot.graph.langgraph_agent import build_recovery_graph
+from paypilot.graph.llm_brain import OpenRouterBrain
 from paypilot.graph.live_hands import create_payment_link, verify_webhook_signature
+from paypilot.graph.policy_adapter import GraphPolicy
 from paypilot.settings import Settings, get_settings
 from paypilot.simulator.population import PopulationSpec, generate_population
 from paypilot.store import RecoveryTools, Store
-from paypilot.voice.conversation import Conversation, OpenRouterDialogueBrain
+from paypilot.voice.conversation import Conversation, DialogueBrain, OpenRouterDialogueBrain
 from paypilot.voice.node import DoNotCallError, VoiceChannelUnavailable, VoiceNode
 from paypilot.voice.safety import validate_script
 from paypilot.voice.script import LLMScriptWriter, ScriptSafetyError, VoiceWriterUnavailable
@@ -49,53 +55,86 @@ _DEMO_PICK = (1, 7, 13, 22, 31, 45)  # a spread of seeded demo subscribers
 
 _MAX_EVENTS = 200
 
+_DOCTRINE_NOTE = (
+    "doctrine-replay benchmark (scripted reference brain, deterministic) — "
+    "live-LLM numbers: uv run paypilot-live-eval"
+)
+
+
+class RecoveryPolicy(Protocol):
+    """The one decision socket both policy backends satisfy."""
+
+    def next_action(self, episode: EpisodeView) -> ProposedAction | None: ...
+
 
 def create_app(
     settings: Settings | None = None,
-    policy: AgentPolicy | None = None,
+    policy: RecoveryPolicy | None = None,
     voice: VoiceNode | None = None,
+    brain: Brain | None = None,
+    dialogue_brain: DialogueBrain | None = None,
 ) -> FastAPI:
-    """Factory. ``voice`` is a test/demo seam: inject a node with any writer."""
+    """Factory.
+
+    LLM-only: refuses to start without OPENROUTER_API_KEY. ``policy``/``voice``/
+    ``brain``/``dialogue_brain`` are TEST seams — inject scripted fakes there so
+    tests stay deterministic; the product path always runs the live LLM.
+    """
     settings = settings or get_settings()
-    agent = policy or build_agent_policy(settings)
+    if settings.openrouter_api_key is None:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is not set — PayPilot is LLM-only and refuses to "
+            "start without a brain. Add it to .env (get one at https://openrouter.ai/keys)."
+        )
+    api_key = settings.openrouter_api_key.get_secret_value()
+    llm_brain = brain if brain is not None else OpenRouterBrain(
+        api_key=api_key,
+        model=settings.openrouter_model,
+        base_url=settings.openrouter_base_url,
+        timeout=settings.openrouter_timeout_s,
+    )
+    agent: RecoveryPolicy = policy if policy is not None else GraphPolicy(brain=llm_brain)
     webhook_secret = settings.rzp_webhook_secret.get_secret_value()
     if voice is not None:
         voice_node = voice
     else:
-        # Fail-loud: the LLM writes scripts when a key is present; with NO writer the
-        # voice channel is unavailable and escalates — never a silent canned script.
-        voice_writer = (
-            LLMScriptWriter(
-                api_key=settings.openrouter_api_key.get_secret_value(),
-                model=settings.openrouter_model,
-            )
-            if settings.openrouter_api_key is not None
-            else None
+        # The LLM writes call scripts — fail-loud on any outage, never a canned script.
+        voice_writer = LLMScriptWriter(
+            api_key=api_key,
+            model=settings.openrouter_model,
+            base_url=settings.openrouter_base_url,
+            timeout=settings.openrouter_timeout_s,
         )
         voice_node = VoiceNode(merchant_name=settings.merchant_name, writer=voice_writer)
     events: list[dict[str, Any]] = []  # in-memory demo store, capped, newest last
 
     # -- two-way voice demo world ------------------------------------------------
     # A real seeded SQLite store + RecoveryTools so conversation context is RETRIEVED
-    # (audited tool calls), and an LLM dialogue brain when a key is configured.
+    # (audited tool calls), and the LIVE LLM dialogue brain drives the call.
     demo_store = Store.in_memory()
     demo_store.seed_population(generate_population(PopulationSpec(size=_DEMO_POP_SIZE, seed=42)))
     demo_tools = RecoveryTools(demo_store)
     _seed_demo_history(demo_store)
-    dialogue_brain = (
-        OpenRouterDialogueBrain(
-            api_key=settings.openrouter_api_key.get_secret_value(),
+    if dialogue_brain is not None:
+        live_dialogue_brain = dialogue_brain
+    else:
+        live_dialogue_brain = OpenRouterDialogueBrain(
+            api_key=api_key,
             model=settings.openrouter_model,
+            base_url=settings.openrouter_base_url,
+            timeout=settings.openrouter_timeout_s,
         )
-        if settings.openrouter_api_key is not None
-        else None
-    )
     conversations: dict[str, Conversation] = {}
     _MAX_SESSIONS = 50  # bounded demo memory: evict oldest call when the cap is hit
 
     app = FastAPI(title="PayPilot.AI", version="0.1.0")
 
     # -- Command Center (served SPA, zero build step) ------------------------------
+    # One canonical dashboard: / and /monitor both land on /command.
+    @app.get("/", include_in_schema=False)
+    def index() -> RedirectResponse:
+        return RedirectResponse(url="/command", status_code=307)
+
     if _STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
@@ -103,6 +142,12 @@ def create_app(
         def command() -> HTMLResponse:
             html = (_STATIC_DIR / "command.html").read_text(encoding="utf-8")
             return HTMLResponse(html)
+
+    # Server-rendered Hindi call audio (neural hi-IN voice). Rendered on demand
+    # and cached by text hash — the browser TTS fallback stays for offline use.
+    _AUDIO_DIR = Path("data/audio")
+    _AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    app.mount("/audio", StaticFiles(directory=_AUDIO_DIR), name="audio")
 
     def record(entry: dict[str, Any]) -> None:
         events.append({"ts": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), **entry})
@@ -169,7 +214,7 @@ def create_app(
         customer_contact = str(notes.get("customer_contact", ""))
 
         action = agent.next_action(view)
-        reason = agent.ledger.records[-1].reason if agent.ledger.records else ""
+        reason = _decision_reason(agent)
         voice_block: dict[str, Any] | None = None
         degraded: dict[str, Any] | None = None
         if action is not None and action.intervention is Intervention.VOICE_NUDGE:
@@ -198,8 +243,10 @@ def create_app(
                 "status": 200,
                 "signature_ok": True,
                 "customer": customer_name,
+                "episode_key": f"{event.subscription_id}:{event.episode_no}",
                 "mode": event.mode.value,
                 "amount_rupees": round(event.amount_paise / 100, 2),
+                "amount_paise": event.amount_paise,
                 "attempt_no": event.attempt_no,
                 "action": effective.value if effective is not None else None,
                 "reason": reason,
@@ -207,8 +254,16 @@ def create_app(
                 "voice": voice_block,
             }
         )
+        event_summary: dict[str, Any] = {
+            "customer": customer_name,
+            "episode_key": f"{event.subscription_id}:{event.episode_no}",
+            "mode": event.mode.value,
+            "amount_rupees": round(event.amount_paise / 100, 2),
+            "amount_paise": event.amount_paise,
+            "attempt_no": event.attempt_no,
+        }
         if action is None:
-            return {"handled": True, "action": None, "reason": reason}
+            return {"handled": True, "action": None, "reason": reason, "event": event_summary}
         # action is not None here ⇒ effective resolved to a concrete intervention
         final_action: Intervention = (
             effective if effective is not None else Intervention.HUMAN_ESCALATION
@@ -218,6 +273,7 @@ def create_app(
             "action": final_action.value,
             "run_at": action.run_at.isoformat(),
             "reason": reason,
+            "event": event_summary,
         }
         if degraded is not None:
             response["degraded"] = degraded
@@ -254,7 +310,7 @@ def create_app(
                     }
                 )
         return {
-            "llm_configured": settings.openrouter_api_key is not None,
+            "llm_configured": True,  # refuse-to-start at app creation guarantees a brain
             "merchant": settings.merchant_name,
             "customers": customers,
         }
@@ -285,7 +341,7 @@ def create_app(
                 "episode_no": episode_no,
             },
             payment_url=f"https://rzp.io/i/{sub_id}-ep{episode_no}",  # synthetic demo link
-            brain=dialogue_brain,
+            brain=live_dialogue_brain,
             tools=demo_tools,
         )
         session_id = f"call_{len(conversations) + 1}"
@@ -296,7 +352,7 @@ def create_app(
         turn = conv.open()
         return {
             "session_id": session_id,
-            "llm_configured": dialogue_brain is not None,
+            "llm_configured": True,  # refuse-to-start at app creation guarantees a brain
             "turn": turn.as_dict(),
             "conversation": conv.as_dict(),
         }
@@ -313,12 +369,42 @@ def create_app(
         turn = conv.respond(text)
         return {"turn": turn.as_dict(), "conversation": conv.as_dict()}
 
+    @app.post("/voice/audio", response_model=None)
+    async def voice_audio(request: Request) -> dict[str, Any] | JSONResponse:
+        """Render a call script to Hindi neural audio (hi-IN-SwaraNeural).
+
+        On demand + cached by text hash, so the demo can offer a real Hindi
+        voice even on machines with no hi-IN OS voice installed. Needs the
+        ``tts`` extra (``uv sync --extra tts``) — otherwise 503 and the UI
+        falls back to browser speech.
+        """
+        import anyio
+
+        from paypilot.voice.tts import EdgeTTS
+
+        body = await _json_body(request)
+        text = str(body.get("text", "")).strip()
+        if not text:
+            return JSONResponse(status_code=422, content={"detail": "empty script text"})
+        if len(text) > 1200:
+            return JSONResponse(status_code=422, content={"detail": "script too long"})
+        digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+        out = _AUDIO_DIR / f"hindi-{digest}.mp3"
+        if not out.exists():
+            rendered = await anyio.to_thread.run_sync(lambda: EdgeTTS().render(text, out))
+            if rendered is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Hindi audio unavailable — try: uv sync --extra tts"},
+                )
+        return {"url": f"/audio/{out.name}"}
+
     # -- live monitor (demo console) -------------------------------------------------
 
     @app.get("/monitor")
-    def monitor() -> HTMLResponse:
-        html = (_STATIC_DIR / "monitor.html").read_text(encoding="utf-8")
-        return HTMLResponse(html)
+    def monitor() -> RedirectResponse:
+        # The old single-feed page is folded into the Command Center's Live panel.
+        return RedirectResponse(url="/command", status_code=307)
 
     @app.get("/monitor/data")
     def monitor_data() -> dict[str, Any]:
@@ -376,8 +462,12 @@ def create_app(
 
     @app.post("/agent/trace", response_model=None)
     async def agent_trace(request: Request) -> dict[str, Any] | JSONResponse:
-        """Run ONE episode through the real LangGraph (reference doctrine brain) and
-        return the node-by-node trace the Agent Graph panel animates."""
+        """Run ONE episode through the real LangGraph (LIVE LLM brain) and
+        return the node-by-node trace the Agent Graph panel animates.
+
+        Fail-loud: a brain outage returns an escalate trace with the real
+        error — never a scripted guess, never a 500.
+        """
         spec = await _json_body(request)
         outage = bool(spec.get("outage", False))
         try:
@@ -402,8 +492,14 @@ def create_app(
             )
         except (TypeError, ValueError):
             return JSONResponse(status_code=422, content={"detail": "bad trace spec"})
-        graph = build_recovery_graph(brain=FakeBrain(fn=scripted_strategist))
-        final = graph.invoke({"episode": episode, "consult_seq": 1})
+        graph = build_recovery_graph(brain=llm_brain)
+        try:
+            final = graph.invoke({"episode": episode, "consult_seq": 1})
+        except Exception as exc:  # noqa: BLE001 — fail-loud trace, never a 500
+            return {
+                "episode_key": f"{episode.subscription_id}:{episode.episode_no}",
+                "steps": _outage_trace(mode, error=str(exc)),
+            }
         return {
             "episode_key": f"{episode.subscription_id}:{episode.episode_no}",
             "steps": _trace_steps_from_state(final),
@@ -413,7 +509,12 @@ def create_app(
 
     @app.post("/eval/quick", response_model=None)
     async def eval_quick(request: Request) -> dict[str, Any]:
-        """Eval panel: a bounded agent-vs-baseline sweep on seeded worlds."""
+        """Eval panel: a bounded agent-vs-baseline sweep on seeded worlds.
+
+        Doctrine-replay benchmark (deterministic scripted brain) — live-LLM
+        numbers come from ``uv run paypilot-live-eval``. The ``note`` field
+        says so honestly so the UI never presents scripted numbers as LLM ones.
+        """
         body = await _json_body(request)
         worlds = min(max(int(body.get("worlds", 5)), 1), 20)
         size = min(max(int(body.get("size", 200)), 50), 300)
@@ -448,7 +549,7 @@ def create_app(
                     for o in outcomes
                 ],
             }
-        return {**_eval_cache[key], "cached": cached}
+        return {**_eval_cache[key], "cached": cached, "note": _DOCTRINE_NOTE}
 
     return app
 
@@ -562,6 +663,27 @@ def _make_voice_call(
     }
 
 
+def _decision_reason(agent: Any) -> str:
+    """The human-readable why behind the last decision.
+
+    GraphPolicy journals every THINK+VALIDATE outcome; AgentPolicy (test seam)
+    keeps a DecisionRecord ledger. Duck-typed so the product never imports
+    test-only ladders — it just reads whichever memory the injected policy has.
+    """
+    journal = getattr(agent, "journal", None)
+    if journal:
+        try:
+            return str(journal[-1].reason)
+        except (IndexError, AttributeError):
+            pass
+    ledger = getattr(agent, "ledger", None)
+    if ledger is not None:
+        records = getattr(ledger, "records", [])
+        if records:
+            return str(records[-1].reason)
+    return ""
+
+
 def _trace_steps_from_state(final: dict[str, Any]) -> list[dict[str, Any]]:
     """Turn one real LangGraph run into the node-by-node trace the UI animates.
     Every value comes from the actual graph state — nothing is staged."""
@@ -571,6 +693,8 @@ def _trace_steps_from_state(final: dict[str, Any]) -> list[dict[str, Any]]:
     report2 = final.get("report2")
     when = final.get("when")
     abstain = bool(final.get("abstain", False))
+    escalated = bool(final.get("escalated", False))
+    escalate_reason = str(final.get("escalate_reason", ""))
 
     steps: list[dict[str, Any]] = [
         {
@@ -586,6 +710,26 @@ def _trace_steps_from_state(final: dict[str, Any]) -> list[dict[str, Any]]:
             },
         }
     ]
+    if escalated:
+        steps.append(
+            {
+                "node": "think",
+                "ok": False,
+                "note": f"brain call failed (fail-loud) — {escalate_reason[:160]}"
+                if escalate_reason
+                else "brain call failed (fail-loud)",
+                "detail": {"error": escalate_reason},
+            }
+        )
+        steps.append(
+            {
+                "node": "escalate",
+                "ok": False,
+                "note": "escalated to human review — NO action executed, nothing silent",
+                "detail": {"outcome": "human_escalation", "degraded": True},
+            }
+        )
+        return steps
     if proposal is not None:
         steps.append(
             {
@@ -635,7 +779,7 @@ def _trace_steps_from_state(final: dict[str, Any]) -> list[dict[str, Any]]:
     return steps
 
 
-def _outage_trace(mode: FailureMode) -> list[dict[str, Any]]:
+def _outage_trace(mode: FailureMode, error: str = "BrainUnavailable: network/API error") -> list[dict[str, Any]]:
     """The fail-loud story, staged as a SIMULATED provider outage for the demo.
     The UI labels this honestly: the brain call failed and NOTHING executed."""
     return [
@@ -649,7 +793,7 @@ def _outage_trace(mode: FailureMode) -> list[dict[str, Any]]:
             "node": "think",
             "ok": False,
             "note": "provider outage — brain call failed (fail-loud, simulated)",
-            "detail": {"error": "BrainUnavailable: network/API error"},
+            "detail": {"error": error},
         },
         {
             "node": "escalate",

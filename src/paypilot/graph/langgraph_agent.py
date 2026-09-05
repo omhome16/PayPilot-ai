@@ -16,7 +16,7 @@ from langgraph.graph import END, StateGraph
 from paypilot.domain.enums import Intervention
 from paypilot.engine.agent import HARD_STOP_DAYS
 from paypilot.engine.policy import EpisodeView
-from paypilot.graph.brain import Brain, BrainProposal, FakeBrain
+from paypilot.graph.brain import Brain, BrainProposal
 from paypilot.graph.guardrails import (
     GuardrailReport,
     Guardrails,
@@ -86,13 +86,17 @@ def _never() -> BrainProposal:
 
 
 def build_recovery_graph(
-    brain: Brain | None = None,
+    brain: Brain,
     guardrails: Guardrails | None = None,
     hard_stop_days: int = HARD_STOP_DAYS,
     pop: Any | None = None,  # Population; profiles ride inside EpisodeView
 ) -> Any:
-    """Compile SENSE→THINK→VALIDATE→ACT/ABSTAIN into a LangGraph StateGraph."""
-    brain = brain or FakeBrain()
+    """Compile SENSE→THINK→VALIDATE→ACT/ABSTAIN into a LangGraph StateGraph.
+
+    The brain is required: pass OpenRouterBrain in LIVE mode, FakeBrain in
+    tests/replay. There is no scripted default — a missing brain is a wiring
+    bug and raises, never a silent doctrine substitution.
+    """
     rails = guardrails or StandardGuardrails()
 
     def validate(state: GraphState) -> GraphState:

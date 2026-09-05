@@ -15,14 +15,12 @@ from typing import Any, Protocol
 
 import httpx
 
-from paypilot.llm import ChatClient
+from paypilot.llm import DEFAULT_TIMEOUT_S, ChatClient, LLMCallError
 
 PROMPT_V1 = """You are PayPilot's recovery narrator. Given a JSON decision payload about a \
 failed subscription payment in India, explain in ONE sentence (max 30 words) WHY the chosen \
 recovery action fits the situation. Be concrete: reference timing, consent, or channel logic. \
 No preamble, no markdown."""
-
-_TIMEOUT_S = 6.0
 
 
 @dataclass(frozen=True)
@@ -53,6 +51,7 @@ class OpenRouterReasoner:
         api_key: str,
         model: str,
         base_url: str = "https://openrouter.ai/api/v1",
+        timeout: float = DEFAULT_TIMEOUT_S,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._model = model
@@ -61,7 +60,7 @@ class OpenRouterReasoner:
             api_key=api_key,
             model=model,
             base_url=base_url,
-            timeout=_TIMEOUT_S,
+            timeout=timeout,
             transport=transport,
         )
 
@@ -73,12 +72,18 @@ class OpenRouterReasoner:
                 "content": json.dumps({"prompt_version": self._prompt_version, **decision_payload}),
             },
         ]
-        content, usage = self._client.complete(
-            messages,
-            temperature=0.2,
-            max_tokens=160,
-            extra_body={"metadata": {"prompt_version": self._prompt_version}},
-        )
+        try:
+            content, usage = self._client.complete(
+                messages,
+                temperature=0.2,
+                # Reasoning models think before answering — give them room.
+                max_tokens=800,
+                extra_body={"metadata": {"prompt_version": self._prompt_version}},
+            )
+        except LLMCallError:
+            # Narration is optional commentary on an already-made decision —
+            # a dead narrator degrades to None, never breaks the money path.
+            return None
         if content is None:
             return None
         return Narration(

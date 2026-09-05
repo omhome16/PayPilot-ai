@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from paypilot.domain.enums import FailureMode, Intervention
 from paypilot.engine.policy import EpisodeView
+from paypilot.graph.brain import BrainProposal, FakeBrain
 from paypilot.graph.langgraph_agent import build_recovery_graph
 from paypilot.simulator.population import PopulationSpec, generate_population
 
@@ -38,7 +39,12 @@ def test_sense_story_includes_customer_history() -> None:
         vertical=sub.plan_name,
         profile=profile,
     )
-    app = build_recovery_graph(pop=pop)
+    app = build_recovery_graph(
+        brain=FakeBrain(
+            fn=lambda s: BrainProposal(action=Intervention.SMART_RETRY, on_salary_day=True)
+        ),
+        pop=pop,
+    )
     final = app.invoke({"episode": v, "consult_seq": 1})
     story = final["story"]
     assert story["history"]["on_time_ratio"] == round(profile.on_time_ratio, 2)

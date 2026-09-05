@@ -129,7 +129,7 @@ def test_openrouter_reasoner_sends_compact_payload_and_parses() -> None:
     assert captured["auth"] == "Bearer sk-or-test"
     body = captured["body"]
     assert body["temperature"] <= 0.3  # low-variance narration
-    assert body["max_tokens"] <= 200  # bounded cost
+    assert body["max_tokens"] <= 1200  # bounded, with room for reasoning models
     assert body["metadata"]["prompt_version"].startswith("v")
 
 

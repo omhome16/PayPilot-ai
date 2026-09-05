@@ -40,7 +40,12 @@ def build_live_brain(settings: Settings | None = None) -> Brain | None:
     key = s.openrouter_api_key
     if key is None:
         return None
-    return OpenRouterBrain(api_key=key.get_secret_value(), model=s.openrouter_model)
+    return OpenRouterBrain(
+        api_key=key.get_secret_value(),
+        model=s.openrouter_model,
+        base_url=s.openrouter_base_url,
+        timeout=s.openrouter_timeout_s,
+    )
 
 
 def run_live_brain_eval(

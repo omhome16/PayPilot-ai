@@ -226,6 +226,9 @@ def build_agent_policy(settings: Settings, appetite: Appetite = STANDARD) -> Age
         from paypilot.engine.reasoner import OpenRouterReasoner
 
         reasoner = OpenRouterReasoner(
-            api_key=key.get_secret_value(), model=settings.openrouter_model
+            api_key=key.get_secret_value(),
+            model=settings.openrouter_model,
+            base_url=settings.openrouter_base_url,
+            timeout=settings.openrouter_timeout_s,
         )
     return AgentPolicy(appetite=appetite, reasoner=reasoner)

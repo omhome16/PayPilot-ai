@@ -3,8 +3,9 @@
 Same wire protocol as our Phase-3 Reasoner but returns structured BrainProposals.
 Prompt embeds the research design rules (research/07). Output parsing is strict;
 any malformed answer triggers one repair round, then FAILS LOUD: an unavailable or
-unparseable brain raises BrainUnavailable so callers escalate to humans — a silent
-'lawful default' would execute an action the LLM never justified.
+unparseable brain raises BrainUnavailable carrying the provider's own error detail
+so callers escalate to humans KNOWING why — a silent 'lawful default' would execute
+an action the LLM never justified.
 """
 
 import json
@@ -14,7 +15,7 @@ import httpx
 
 from paypilot.domain.enums import Intervention
 from paypilot.graph.brain import BrainProposal
-from paypilot.llm import ChatClient, parse_json_object
+from paypilot.llm import DEFAULT_TIMEOUT_S, ChatClient, LLMCallError, parse_json_object
 
 
 class BrainUnavailable(RuntimeError):
@@ -51,10 +52,15 @@ class OpenRouterBrain:
         api_key: str,
         model: str,
         base_url: str = "https://openrouter.ai/api/v1",
+        timeout: float = DEFAULT_TIMEOUT_S,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._client = ChatClient(
-            api_key=api_key, model=model, base_url=base_url, transport=transport
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+            transport=transport,
         )
         self.calls = 0
         self.tokens_used = 0
@@ -86,11 +92,14 @@ class OpenRouterBrain:
             return parsed2
         # Fail-loud: neither attempt produced a usable proposal. Never guess.
         if content is None and content2 is None:
-            raise BrainUnavailable("LLM brain call failed (network/API error)")
+            raise BrainUnavailable("LLM brain returned empty content on both attempts")
         raise BrainUnavailable("LLM brain output unparseable after repair round")
 
     def _call(self, messages: list[dict[str, str]]) -> str | None:
-        content, _ = self._client.complete(messages, temperature=0.2, max_tokens=150)
+        try:
+            content, _ = self._client.complete(messages, temperature=0.2, max_tokens=800)
+        except LLMCallError as exc:
+            raise BrainUnavailable(f"LLM brain call failed — {exc}") from exc
         self.tokens_used = self._client.tokens_used
         return content
 

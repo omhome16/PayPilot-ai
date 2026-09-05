@@ -23,11 +23,13 @@ const post = (path, body) => api(path, {
   body: JSON.stringify(body || {}),
 });
 
-/* ---------- navigation ---------- */
+/* ---------- navigation (one flowing demo page) ---------- */
+const reduceMotion = window.matchMedia &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 function go(name) {
   document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("active", b.dataset.panel === name));
-  document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + name));
-  window.scrollTo({ top: 0 });
+  const el = document.getElementById("panel-" + name);
+  if (el) el.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
   if (name === "live") refreshLive();
   if (name === "memory") { loadTables(); streamTools(); }
   if (name === "ledger") refreshLedger();
@@ -35,11 +37,26 @@ function go(name) {
 }
 document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => go(b.dataset.panel)));
 
+/* Scroll-spy: the rail always shows which demo step is on screen. */
+if ("IntersectionObserver" in window) {
+  const spy = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (!e.isIntersecting) return;
+      const name = e.target.id.replace("panel-", "");
+      const btn = document.querySelector(`.nav[data-panel="${name}"]`);
+      if (!btn) return; // memory/lab ride inside steps 4/5 — keep the step lit
+      document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("active", b === btn));
+    });
+  }, { rootMargin: "-35% 0px -55% 0px" });
+  document.querySelectorAll(".panel").forEach((p) => spy.observe(p));
+}
+
 /* ---------- overview ---------- */
 async function refreshOverview() {
   try {
-    const [store, mon, dec] = await Promise.all([
+    const [store, mon, dec, vd] = await Promise.all([
       api("/store/tables"), api("/monitor/data"), api("/store/rows?table=decisions&limit=300"),
+      api("/voice/demo"),
     ]);
     const count = (t) => (store.tables.find((x) => x.name === t) || {}).rows ?? 0;
     const deg = (dec.rows || []).filter((r) => r.degraded).length;
@@ -53,11 +70,11 @@ async function refreshOverview() {
     ].map(([l, n, c]) =>
       `<div class="kpi"><div class="n ${c}">${n}</div><div class="l">${esc(l)}</div></div>`).join("");
 
-    const llmOn = !!mon.merchant; // merchant implies api up
+    const llmOn = !!(vd && vd.llm_configured); // live server state, not a guess
     $("ov-systems").innerHTML = [
       ["◇", "Webhook receiver", "HMAC-verified payment.failed in → decision out", "live"],
       ["◎", "Agent graph", "SENSE → THINK → VALIDATE → ACT state machine", "live"],
-      ["◉", "Voice channel", "LLM-written, safety-validated; fail-loud when down", llmOn ? "armed" : "needs key"],
+      ["◉", "Voice channel", "LLM-written, safety-validated; fail-loud when down", llmOn ? "live LLM" : "brain down — fail-loud"],
       ["▤", "Memory (SQLite)", "customers · episodes · decisions · tool calls", store.tables.length + " tables"],
       ["◔", "Eval harness", "agent vs baseline on identical seeded worlds", "reproducible"],
     ].map(([i, t, d, v]) =>
@@ -67,8 +84,18 @@ async function refreshOverview() {
 }
 
 /* ---------- live recovery ---------- */
-function sim(scenario) {
-  post("/monitor/simulate", { scenario }).then(() => refreshLive()).catch(() => {});
+function sim(scenario, autoTrace = true) {
+  const pend = $("live-pending");
+  if (pend) pend.textContent = "consulting the live LLM brain…";
+  return post("/monitor/simulate", { scenario })
+    .then((d) => {
+      refreshLive();
+      // Pipeline: Step 2 immediately shows THIS event's live thinking.
+      if (autoTrace && d && d.event) runTraceFor(d.event, false);
+      return d;
+    })
+    .catch(() => {})
+    .finally(() => { if (pend) pend.textContent = ""; });
 }
 async function refreshLive() {
   try {
@@ -121,6 +148,15 @@ function card(e) {
           <button class="btn" onclick="stopSpeak()">Stop</button></div>`;
     }
   }
+  // Handoff to the next steps: trace THIS event's thinking, hear its Hindi audio.
+  if (e.status === 200 && e.action !== undefined && e.mode) {
+    h += `<div class="handoff">` +
+      `<button class="btn handoff-btn" data-mode="${esc(e.mode)}" data-amount="${e.amount_paise || Math.round((e.amount_rupees || 0) * 100)}" data-attempt="${e.attempt_no || 1}" data-customer="${esc(e.customer || "")}" data-episode="${esc(e.episode_key || "")}" onclick="traceCard(this)">Thinking ↓</button>`;
+    if (v && !v.escalated && v.script) {
+      h += `<button class="btn handoff-btn" data-script="${encodeURIComponent(v.script)}" onclick="playHindiBtn(this)" title="Neural hi-IN voice, rendered on the server">▶ Hindi audio</button>`;
+    }
+    h += `</div>`;
+  }
   h += `</div>`;
   return h;
 }
@@ -128,12 +164,48 @@ function card(e) {
 /* ---------- agent graph ---------- */
 let traceTimer = null;
 const NODE_ORDER = ["sense", "think", "validate", "act", "abstain", "escalate"];
-async function runTrace() {
+
+/* Pipeline glue: trace ONE Step-1 event's thinking in Step 2 (same episode). */
+function runTraceFor(ev, scroll) {
+  try {
+    if (ev.mode) $("g-mode").value = ev.mode;
+    if (ev.amount_paise) $("g-amount").value = Math.round(ev.amount_paise / 100);
+    if (ev.attempt_no) $("g-attempt").value = ev.attempt_no;
+    const label = `${ev.customer || "customer"} · ${ev.mode} · ₹${Math.round(ev.amount_rupees ?? (ev.amount_paise || 0) / 100)} · attempt ${ev.attempt_no || 1}`;
+    $("g-context").innerHTML = `Tracing this event ↓ <b>${esc(label)}</b>` +
+      (ev.episode_key ? ` · <span class="mono">${esc(ev.episode_key)}</span>` : "");
+    if (ev.episode_key && $("l-episode")) {
+      // Step 4 follows the same episode: filter the ledger to its rows.
+      $("l-episode").value = ev.episode_key;
+      refreshLedger();
+    }
+  } catch (_) {}
+  runTrace(scroll);
+}
+function traceCard(btn) {
+  const d = btn.dataset;
+  runTraceFor({
+    mode: d.mode,
+    amount_paise: Number(d.amount) || 0,
+    attempt_no: Number(d.attempt) || 1,
+    customer: d.customer,
+    episode_key: d.episode,
+  }, true);
+}
+async function traceLatest() {
+  try {
+    const d = await api("/monitor/data");
+    const evs = (d.events || []).filter((e) => e.status === 200 && e.action !== undefined && e.mode);
+    if (evs.length) runTraceFor(evs[0], false); // feed is newest-first
+  } catch (_) {}
+}
+async function runTrace(scroll) {
   const mode = $("g-mode").value;
   const amount = Math.round((Number($("g-amount").value) || 100) * 100);
   const attempts = Number($("g-attempt").value) || 1;
   const outage = $("g-outage").checked;
   $("g-run").disabled = true;
+  $("g-steps").innerHTML = `<div class="empty">Consulting the live LLM brain — SENSE → THINK → VALIDATE → ACT…</div>`;
   document.querySelectorAll(".step-line").forEach((s) => s.classList.remove("show"));
   document.querySelectorAll(".node").forEach((n) => n.classList.remove("lit", "ok", "bad"));
   try {
@@ -162,7 +234,35 @@ async function runTrace() {
     }, 350);
   } catch (err) {
     $("g-steps").innerHTML = `<div class="event"><span class="meta">trace failed: ${esc(err.message)}</span></div>`;
-  } finally { $("g-run").disabled = false; }
+  } finally {
+    $("g-run").disabled = false;
+    if (scroll) go("graph");
+  }
+}
+
+/* Hindi neural audio (server-rendered hi-IN voice), browser speech as fallback. */
+let hindiAudio = null;
+async function playHindiBtn(btn) {
+  const script = decodeURIComponent(btn.getAttribute("data-script") || "");
+  if (!script) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "rendering Hindi audio…";
+  try {
+    stopSpeak();
+    const d = await post("/voice/audio", { text: script });
+    await new Promise((resolve, reject) => {
+      hindiAudio = new Audio(d.url);
+      hindiAudio.onended = () => { hindiAudio = null; resolve(); };
+      hindiAudio.onerror = reject;
+      hindiAudio.play().catch(reject);
+    });
+  } catch (_) {
+    speak(script); // server render unavailable → browser Hindi voice fallback
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 /* ---------- voice studio ---------- */
@@ -285,7 +385,7 @@ function buildInput() {
 function listenMic() {
   if (!("webkitSpeechRecognition" in window)) return;
   const rec = new webkitSpeechRecognition();
-  rec.lang = "en-IN"; rec.interimResults = false; rec.maxAlternatives = 1;
+  rec.lang = "hi-IN"; rec.interimResults = false; rec.maxAlternatives = 1;
   $("v-status").innerHTML = `<span class="badge y">listening… speak now</span>`;
   rec.onresult = (ev) => {
     const text = ev.results[0][0].transcript;
@@ -296,17 +396,37 @@ function listenMic() {
   rec.start();
 }
 
-/* ---------- speech ---------- */
+/* ---------- speech (Hindi voice for Hinglish scripts) ---------- */
+let hindiVoice = null;
+function pickHindiVoice() {
+  try {
+    const vs = speechSynthesis.getVoices() || [];
+    hindiVoice =
+      vs.find((v) => v.lang === "hi-IN") ||
+      vs.find((v) => v.lang && v.lang.toLowerCase().startsWith("hi")) ||
+      null;
+  } catch (_) {
+    hindiVoice = null;
+  }
+  return hindiVoice;
+}
 function speak(text) {
   if (!text) return;
   if ("speechSynthesis" in window) {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
+    // Without an explicit voice the browser reads Hinglish with its default
+    // ENGLISH voice — that is why playback sounded unnatural. Prefer hi-IN.
+    if (!pickHindiVoice() && !hindiVoice) pickHindiVoice();
+    if (hindiVoice) u.voice = hindiVoice;
     u.lang = "hi-IN"; u.rate = 0.95;
     speechSynthesis.speak(u);
   }
 }
-function stopSpeak() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+function stopSpeak() {
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (hindiAudio) { try { hindiAudio.pause(); } catch (_) {} hindiAudio = null; }
+}
 
 /* ---------- memory / db ---------- */
 async function loadTables() {
@@ -354,11 +474,12 @@ async function refreshLedger() {
     const d = await api("/store/rows?table=decisions&limit=120");
     const rows = d.rows || [];
     const f = $("l-filter").value;
+    const ep = (($("l-episode") || {}).value || "").trim();
     const filtered = rows.filter((r) => {
       if (f === "degraded") return !!r.degraded;
       if (f === "escalation") return r.chosen === "human_escalation";
       return true;
-    });
+    }).filter((r) => !ep || String(r.episode_key || "").includes(ep));
     $("ledger-table").innerHTML = filtered.length ? `<div class="table-wrap"><table class="data">
       <thead><tr><th>ts</th><th>episode</th><th>mode</th><th>att</th><th>chosen</th><th>reason</th><th>degraded</th></tr></thead><tbody>` +
       filtered.map((r) => `<tr>
@@ -388,7 +509,7 @@ async function runEval() {
       `<div class="kpi"><div class="n">${fmtRs(d.baseline_recovered_rupees * 100)}</div><div class="l">baseline recovered</div></div>` +
       `</div><div class="table-wrap"><table class="data"><thead><tr><th>world</th><th>baseline ₹</th><th>agent ₹</th><th>agent wins</th></tr></thead><tbody>` +
       (d.per_world || []).map((w) => `<tr><td>seed ${w.seed}</td><td>${fmtRs(w.baseline * 100)}</td><td>${fmtRs(w.agent * 100)}</td><td>${w.win ? "✓" : "—"}</td></tr>`).join("") +
-      `</tbody></table></div><p class="eval-note">Quick sweep shown. The submitted headline (85% win-rate over 20 worlds, mean 2.42×) lives in EVAL_REPORT.md — same code, more worlds. Reference doctrine brain, deterministic.${d.cached ? " (cached)" : ""}</p>`;
+      `</tbody></table></div><p class="eval-note">Quick sweep shown. The submitted headline (85% win-rate over 20 worlds, mean 2.42×) lives in EVAL_REPORT.md — same code, more worlds.${d.note ? " " + esc(d.note) + "." : ""}${d.cached ? " (cached)" : ""}</p>`;
   } catch (err) {
     $("ev-results").innerHTML = `<div class="event"><span class="meta">sweep failed: ${esc(err.message)}</span></div>`;
   } finally {
@@ -402,7 +523,7 @@ async function fireLab(ev) {
   const f = ev.target;
   const spec = {
     mode: f.mode.value,
-    amount_paise: Math.round((Number(f.amount.value) || 100) * 1),
+    amount_paise: Math.round((Number(f.amount.value) || 100) * 100),
     attempt_no: Number(f.attempt.value) || 1,
     subscription_id: f.sub.value,
     customer_name: f.name.value,
@@ -445,14 +566,19 @@ async function refreshTop() {
 
 function bindStatic() {
   $("ov-demo-pack").addEventListener("click", () => {
-    sim("fresh_funds"); setTimeout(() => sim("revoked"), 350); setTimeout(() => sim("voice"), 700);
+    // Three failures, one story — the last (big-ticket voice) resolving last
+    // triggers Step 2's trace so the pipeline ends on the richest episode.
+    sim("fresh_funds", false);
+    setTimeout(() => sim("revoked", false), 350);
+    setTimeout(() => sim("voice", false).finally(() => setTimeout(traceLatest, 1500)), 700);
     setTimeout(() => go("live"), 950);
   });
-  $("g-run").addEventListener("click", runTrace);
+  $("g-run").addEventListener("click", () => runTrace(false));
   $("v-start").addEventListener("click", startCall);
   $("ev-run").addEventListener("click", runEval);
   $("lab-form").addEventListener("submit", fireLab);
   $("l-filter").addEventListener("change", refreshLedger);
+  $("l-episode").addEventListener("input", refreshLedger);
   $("g-mode").addEventListener("change", () => {
     const m = $("g-mode").value;
     const amounts = { insufficient_funds: 1500, mandate_revoked: 999, limit_exceeded: 1500, bank_downtime: 1500 };
@@ -465,13 +591,18 @@ function bindStatic() {
 
 document.addEventListener("DOMContentLoaded", () => {
   bindStatic();
+  if ("speechSynthesis" in window) {
+    // Chrome fills the voice list asynchronously — refresh when it arrives.
+    pickHindiVoice();
+    speechSynthesis.onvoiceschanged = pickHindiVoice;
+  }
   buildRailDiagram();
   refreshOverview(); refreshLive(); refreshTop();
   loadTables(); refreshLedger();
   setInterval(refreshOverview, 3000);
   setInterval(refreshLive, 2500);
   setInterval(refreshTop, 5000);
-  setInterval(() => { if (document.querySelector(".panel.active")?.id === "panel-memory") streamTools(); }, 3000);
-  setInterval(() => { if (document.querySelector(".panel.active")?.id === "panel-ledger") refreshLedger(); }, 2500);
+  setInterval(streamTools, 3000);
+  setInterval(refreshLedger, 2500);
   if ("webkitSpeechRecognition" in window) window.llmConfigured = false;
 });

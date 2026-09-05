@@ -1,11 +1,19 @@
-"""Command Center: served SPA + the JSON surfaces each panel polls."""
+"""Command Center: served SPA + the JSON surfaces each panel polls.
+
+Hermetic: dummy key + injected fake brains (no live LLM in tests).
+"""
 
 import json
+from typing import Any
 
 from fastapi.testclient import TestClient
 
 from paypilot.api import create_app
+from paypilot.domain.enums import Intervention
+from paypilot.graph.brain import BrainProposal, FakeBrain
+from paypilot.graph.policy_adapter import GraphPolicy
 from paypilot.settings import Settings
+from paypilot.voice.node import VoiceNode
 
 
 def _settings() -> Settings:
@@ -13,11 +21,46 @@ def _settings() -> Settings:
         rzp_key_id="rzp_test_key",
         rzp_key_secret="rzp_test_secret",  # noqa: S106 — fixture value
         rzp_webhook_secret="whsec_test_abc",  # noqa: S106 — fixture value
+        openrouter_api_key="sk-test-dummy",  # noqa: S106 — fixture value, never sent
+        openrouter_model="test-model",
+        _env_file=None,  # hermetic: never read the developer's real .env key
+    )
+
+
+def _fake_policy() -> GraphPolicy:
+    def _fn(state: dict[str, Any]) -> BrainProposal:
+        if state.get("mode") in ("mandate_revoked", "limit_exceeded"):
+            return BrainProposal(
+                action=Intervention.PAYMENT_LINK, days_ahead=1, reason="test: win-back"
+            )
+        if int(state.get("attempts", 1)) >= 3 and float(state.get("amount_rupees", 0)) >= 1000:
+            return BrainProposal(
+                action=Intervention.VOICE_NUDGE, days_ahead=2, reason="test: voice"
+            )
+        return BrainProposal(
+            action=Intervention.SMART_RETRY, on_salary_day=True, reason="test: retry"
+        )
+
+    return GraphPolicy(brain=FakeBrain(fn=_fn))
+
+
+def _trace_brain() -> FakeBrain:
+    return FakeBrain(
+        fn=lambda s: BrainProposal(
+            action=Intervention.SMART_RETRY, on_salary_day=True, reason="test: trace retry"
+        )
     )
 
 
 def _client() -> TestClient:
-    return TestClient(create_app(settings=_settings()))
+    return TestClient(
+        create_app(
+            settings=_settings(),
+            policy=_fake_policy(),
+            brain=_trace_brain(),
+            voice=VoiceNode(merchant_name="PayPilot", writer=None),
+        )
+    )
 
 
 def test_command_center_page_renders_all_panels() -> None:
@@ -86,7 +129,7 @@ def test_webhook_decision_persists_to_the_store() -> None:
     assert r.json()["action"] == "payment_link"
     decisions = c.get("/store/rows?table=decisions&limit=50").json()["rows"]
     assert any(d["chosen"] == "payment_link" for d in decisions)
-    # the fail-loud voice path records a DEGRADED escalation decision (no key in tests)
+    # the fail-loud voice path records a DEGRADED escalation decision (writer=None in tests)
     r2 = c.post(
         "/monitor/fire",
         content=json.dumps(

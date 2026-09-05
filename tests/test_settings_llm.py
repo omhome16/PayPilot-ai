@@ -1,7 +1,8 @@
-"""LLM-layer settings: OpenRouter is OPTIONAL by design.
+"""LLM-layer settings: OpenRouter key is REQUIRED by the server (LLM-only product).
 
-No key configured ⇒ PayPilot runs identically with reasoning/narration OFF
-(NullReasoner). A key appearing in env is the ONLY switch — no code change.
+No key configured ⇒ Settings still loads (openrouter_api_key is None) so tests
+stay hermetic — but create_app refuses to start without a key. A key appearing
+in env is the ONLY switch for the live brain — no code change.
 """
 
 from paypilot.settings import Settings

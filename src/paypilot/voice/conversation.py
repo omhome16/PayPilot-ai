@@ -23,7 +23,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from paypilot.llm import ChatClient, parse_json_object
+from paypilot.llm import DEFAULT_TIMEOUT_S, ChatClient, LLMCallError, parse_json_object
 from paypilot.store.tools import RecoveryTools
 from paypilot.voice.script import (
     CallScript,
@@ -154,17 +154,26 @@ Reply with ONLY strict JSON:
 
 
 class OpenRouterDialogueBrain:
-    """LLM dialogue driver (OpenRouter-compatible), fail-loud like every writer."""
+    """LLM dialogue driver (OpenRouter-compatible), fail-loud like every writer.
+
+    Transport failures raise VoiceWriterUnavailable carrying the provider's own
+    error detail — never a bare 'network/API' that hides the cause.
+    """
 
     def __init__(
         self,
         api_key: str,
         model: str,
         base_url: str = "https://openrouter.ai/api/v1",
+        timeout: float = DEFAULT_TIMEOUT_S,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._client = ChatClient(
-            api_key=api_key, model=model, base_url=base_url, transport=transport
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+            transport=transport,
         )
         self.calls = 0
         self.tokens_used = 0
@@ -177,7 +186,7 @@ class OpenRouterDialogueBrain:
         ]
         content = self._call(messages)
         if content is None:
-            raise VoiceWriterUnavailable("dialogue brain call failed (network/API)")
+            raise VoiceWriterUnavailable("dialogue brain returned empty content")
         parsed = self._parse(content)
         if parsed is not None:
             return parsed
@@ -195,11 +204,14 @@ class OpenRouterDialogueBrain:
         if parsed2 is not None:
             return parsed2
         if content2 is None:
-            raise VoiceWriterUnavailable("dialogue brain call failed (network/API)")
+            raise VoiceWriterUnavailable("dialogue brain returned empty content on both attempts")
         raise VoiceWriterUnavailable("dialogue brain output unparseable after repair round")
 
     def _call(self, messages: list[dict[str, str]]) -> str | None:
-        content, _ = self._client.complete(messages, temperature=0.4, max_tokens=300)
+        try:
+            content, _ = self._client.complete(messages, temperature=0.4, max_tokens=1200)
+        except LLMCallError as exc:
+            raise VoiceWriterUnavailable(f"dialogue brain call failed — {exc}") from exc
         self.tokens_used = self._client.tokens_used
         return content
 
