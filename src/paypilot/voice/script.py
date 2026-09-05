@@ -15,7 +15,8 @@ from typing import Any
 
 import httpx
 
-from paypilot.voice.safety import _ABUSE, _BLOCKLIST, _SHOUT_RUN, MAX_WORDS
+from paypilot.llm import ChatClient, parse_json_object
+from paypilot.voice.safety import hard_block_problems
 
 _WORDS_PER_SECOND = 2.5
 _AMOUNT_RE = re.compile(r"(?:₹|rs\.?)\s?[\d,]+", re.IGNORECASE)
@@ -53,26 +54,11 @@ def validate_script_safety(
 ) -> None:
     """Raise ScriptSafetyError on any violation; return None when clean."""
     text = script.text.strip()
-    low = text.lower()
-    problems: list[str] = []
 
     if not text:
         raise ScriptSafetyError("empty script")
 
-    for phrase in _BLOCKLIST:
-        if phrase in low:
-            problems.append(f"threat/intimidation language: '{phrase}'")
-    for word in _ABUSE:
-        if word in low:
-            problems.append(f"abusive language: '{word}'")
-    shout = _SHOUT_RUN.search(text)
-    if shout is not None:
-        problems.append(f"spam shouting: '{shout.group(0)}'")
-
-    words = len(text.split())
-    if words > MAX_WORDS:
-        problems.append(f"script too long: {words} words (max {MAX_WORDS})")
-
+    problems = hard_block_problems(text)
     if require_amount and _AMOUNT_RE.search(text) is None:
         problems.append("required amount (₹/Rs …) missing")
     if require_link and _LINK_RE.search(text) is None:
@@ -151,12 +137,8 @@ class LLMScriptWriter:
         base_url: str = "https://openrouter.ai/api/v1",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._model = model
-        self._client = httpx.Client(
-            base_url=base_url,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            timeout=10.0,
-            transport=transport,
+        self._client = ChatClient(
+            api_key=api_key, model=model, base_url=base_url, transport=transport
         )
         self.calls = 0
         self.tokens_used = 0
@@ -167,7 +149,8 @@ class LLMScriptWriter:
             {"role": "system", "content": _PROMPT_VOICE_V1},
             {"role": "user", "content": json.dumps(ctx)},
         ]
-        content = self._call(messages)
+        content, _ = self._client.complete(messages, temperature=0.4, max_tokens=250)
+        self.tokens_used = self._client.tokens_used
         if content is None:
             raise VoiceWriterUnavailable("LLM script writer call failed (network/API)")
         parsed = self._parse(content)
@@ -179,36 +162,10 @@ class LLMScriptWriter:
         validate_script_safety(script, require_amount=True, require_link=True)
         return script
 
-    def _call(self, messages: list[dict[str, str]]) -> str | None:
-        try:
-            r = self._client.post(
-                "/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": messages,
-                    "temperature": 0.4,
-                    "max_tokens": 250,
-                },
-            )
-            r.raise_for_status()
-            data = r.json()
-            self.tokens_used += int(data.get("usage", {}).get("total_tokens", 0))
-            return str(data["choices"][0]["message"]["content"]).strip()
-        except Exception:  # noqa: BLE001 — degradation is the design
-            return None
-
     @staticmethod
     def _parse(content: str | None) -> str | None:
-        if not content:
+        d = parse_json_object(content)
+        if d is None:
             return None
-        text = content.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-        try:
-            d = json.loads(text.strip())
-            out = str(d.get("text", "")).strip()
-            return out or None
-        except (json.JSONDecodeError, ValueError):
-            return None
+        out = str(d.get("text", "")).strip()
+        return out or None

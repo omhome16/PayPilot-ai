@@ -17,8 +17,6 @@ from typing import Any, cast
 from paypilot.domain.calendar import IndianPaymentCalendar
 from paypilot.store.db import Store
 
-_IST = dt.timedelta(hours=5, minutes=30)
-
 
 @dataclass(frozen=True)
 class ToolResult:
@@ -29,14 +27,6 @@ class ToolResult:
     data: dict[str, Any]
     latency_ms: float
     rows: int = 0
-
-    def to_audit(self) -> dict[str, Any]:
-        return {
-            "tool_name": self.name,
-            "args": self.args,
-            "result": {"data": self.data, "rows": self.rows},
-            "latency_ms": self.latency_ms,
-        }
 
 
 def _jsonable(v: Any) -> Any:

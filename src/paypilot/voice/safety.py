@@ -32,37 +32,39 @@ class ScriptReport:
     violations: list[str] = field(default_factory=list)
 
 
+def hard_block_problems(text: str) -> list[str]:
+    """Shared hard-block checks (threats/abuse/shouting/length). Both the
+    content validator below and the writers' own gate (script.py) run these,
+    so one rule change hardens every voice path."""
+    low = text.lower()
+    problems: list[str] = []
+    for phrase in _BLOCKLIST:
+        if phrase in low:
+            problems.append(f"threat/intimidation language blocked: '{phrase}'")
+    for word in _ABUSE:
+        if word in low:
+            problems.append(f"abusive language blocked: '{word}'")
+    shout = _SHOUT_RUN.search(text)
+    if shout is not None:
+        problems.append(f"spam shouting detected: '{shout.group(0)}'")
+    words = len(text.split())
+    if words > MAX_WORDS:
+        problems.append(f"script too long: {words} words (max {MAX_WORDS})")
+    return problems
+
+
 def validate_script(script: str, *, merchant_name: str) -> ScriptReport:
     text = script.strip()
     low = text.lower()
-    problems: list[str] = []
 
     if not text:
         return ScriptReport(ok=False, violations=["empty script"])
 
+    problems = hard_block_problems(text)
     if merchant_name.split()[0].lower() not in low:
         problems.append(f"merchant name '{merchant_name}' not mentioned")
-
     if not _AMOUNT_RE.search(text):
         problems.append("pending amount (₹…) not mentioned")
-
     if not any(w in low for w in _OPTOUT_WORDS):
         problems.append("no opt-out offer (pause/stop/rocks denge) found")
-
-    for phrase in _BLOCKLIST:
-        if phrase in low:
-            problems.append(f"threat/intimidation language blocked: '{phrase}'")
-
-    for word in _ABUSE:
-        if word in low:
-            problems.append(f"abusive language blocked: '{word}'")
-
-    shout = _SHOUT_RUN.search(text)
-    if shout is not None:
-        problems.append(f"spam shouting detected: '{shout.group(0)}'")
-
-    words = len(text.split())
-    if words > MAX_WORDS:
-        problems.append(f"script too long: {words} words (max {MAX_WORDS})")
-
     return ScriptReport(ok=not problems, violations=problems)

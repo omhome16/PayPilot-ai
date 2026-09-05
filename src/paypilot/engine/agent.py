@@ -21,24 +21,16 @@ Ladders:
 
 import datetime as dt
 from dataclasses import dataclass
-from enum import IntEnum
 from typing import Any
 
-from paypilot.domain.calendar import IndianPaymentCalendar
+from paypilot.domain.calendar import ist_date_of, next_salary_date, utc_at_ist_hour
 from paypilot.domain.enums import FailureMode, Intervention
 from paypilot.engine.policy import EpisodeView, ProposedAction
 from paypilot.engine.reasoner import Narration, NullReasoner, Reasoner
 from paypilot.settings import Settings
 
-_IST = dt.timedelta(hours=5, minutes=30)
 _PROMPT_VERSION = "v1"
 HARD_STOP_DAYS = 21  # single source of truth for the recovery-horizon rail
-
-
-class LadderStep(IntEnum):
-    FIRST_CONTACT = 1
-    SECOND_TOUCH = 2
-    THIRD_TOUCH = 3
 
 
 @dataclass(frozen=True)
@@ -79,16 +71,9 @@ class DecisionLedger:
         self.records.append(rec)
 
 
-def _next_salary_date(after_utc: dt.datetime) -> dt.date:
-    ist_date = (after_utc + _IST).date()
-    cal = IndianPaymentCalendar.with_default_festivals(year=ist_date.year)
-    return cal.next_salary_date(ist_date)
-
-
-def _utc_at_ist_hour(d: dt.date, hour_ist: int) -> dt.datetime:
-    """UTC instant of ``hour_ist``:30 IST on date d (tz-attached BEFORE offset math)."""
-    naive_ist = dt.datetime(d.year, d.month, d.day, hour_ist, 30)
-    return naive_ist.replace(tzinfo=dt.UTC) - _IST
+def _next_salary_after(after_utc: dt.datetime) -> dt.date:
+    """Next salary day (strictly after ``after_utc``, IST-aware) via the shared calendar."""
+    return next_salary_date(ist_date_of(after_utc))
 
 
 class AgentPolicy:
@@ -176,10 +161,10 @@ class AgentPolicy:
 
     def _salary_timed_when(self, episode: EpisodeView) -> dt.datetime:
         base = episode.first_failed_at + dt.timedelta(days=1)
-        salary_date = _next_salary_date(base)
-        when = _utc_at_ist_hour(salary_date, 10)  # 10:30 IST, legal mid-morning window
+        salary_date = _next_salary_after(base)
+        when = utc_at_ist_hour(salary_date, 10)  # 10:30 IST, legal mid-morning window
         if when <= episode.first_failed_at:
-            when = _utc_at_ist_hour((episode.first_failed_at + dt.timedelta(days=1)).date(), 10)
+            when = utc_at_ist_hour((episode.first_failed_at + dt.timedelta(days=1)).date(), 10)
         return when
 
     @staticmethod

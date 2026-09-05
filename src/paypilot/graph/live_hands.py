@@ -6,6 +6,8 @@ falls back to simulated handling; a live-API outage never breaks a run.
 """
 
 import base64
+import hashlib
+import hmac
 
 import httpx
 
@@ -70,8 +72,5 @@ def create_payment_link(
 
 def verify_webhook_signature(body: bytes, signature: str, webhook_secret: str) -> bool:
     """HMAC-SHA256 check of Razorpay webhook payloads (docs: X-Razorpay-Signature)."""
-    import hashlib
-    import hmac
-
     expected = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)

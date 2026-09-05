@@ -2,10 +2,33 @@
 
 Deterministic and pure: same inputs always give same answers (tests pin this), because
 the eval harness requires identical worlds across runs.
+
+This module is also the single home of IST↔UTC math. Every subsystem (engine,
+graph, voice, simulator, store) used to carry its own private ``timedelta(hours=5,
+minutes=30)`` and salary-date helper; that duplication is consolidated here so the
+whole repo agrees on what "next salary date" means.
 """
 
 import datetime as dt
 from dataclasses import dataclass
+
+IST_OFFSET = dt.timedelta(hours=5, minutes=30)  # India Standard Time is UTC+5:30
+
+
+def ist_date_of(when_utc: dt.datetime) -> dt.date:
+    """Calendar day in India for a UTC instant."""
+    return (when_utc + IST_OFFSET).date()
+
+
+def next_salary_date(ist_day: dt.date) -> dt.date:
+    """Next 1st-of-month strictly after ``ist_day`` (default-festival calendar)."""
+    return IndianPaymentCalendar.with_default_festivals(year=ist_day.year).next_salary_date(ist_day)
+
+
+def utc_at_ist_hour(ist_day: dt.date, hour_ist: int, minute_ist: int = 30) -> dt.datetime:
+    """UTC instant of ``hour_ist:minute_ist`` IST on ``ist_day`` (tz-aware)."""
+    naive_ist = dt.datetime(ist_day.year, ist_day.month, ist_day.day, hour_ist, minute_ist)
+    return naive_ist.replace(tzinfo=dt.UTC) - IST_OFFSET
 
 
 @dataclass(frozen=True)

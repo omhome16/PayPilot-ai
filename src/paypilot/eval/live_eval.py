@@ -9,12 +9,11 @@ on the deterministic scripted brain so CI never touches the network.
 
 import statistics
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 from paypilot.engine.naive import NaiveRetryPolicy
 from paypilot.engine.runner import RunEngine
-from paypilot.eval.multiseed import scripted_strategist
+from paypilot.eval.multiseed import EVAL_WINDOW, scripted_strategist
 from paypilot.graph.brain import Brain, FakeBrain
 from paypilot.graph.llm_brain import OpenRouterBrain
 from paypilot.graph.policy_adapter import GraphPolicy
@@ -22,9 +21,6 @@ from paypilot.graph.replay import save_journal
 from paypilot.settings import Settings, get_settings
 from paypilot.simulator.failure_gen import FailureGenSpec, generate_failures
 from paypilot.simulator.population import PopulationSpec, generate_population
-from paypilot.simulator.window import WindowSpec
-
-_WINDOW = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
 
 
 @dataclass(frozen=True)
@@ -63,14 +59,14 @@ def run_live_brain_eval(
     outcomes: list[LiveWorldOutcome] = []
     for seed in seeds:
         pop = generate_population(PopulationSpec(size=size, seed=seed))
-        events = generate_failures(pop, FailureGenSpec(window=_WINDOW, seed=seed))
+        events = generate_failures(pop, FailureGenSpec(window=EVAL_WINDOW, seed=seed))
 
-        base = RunEngine(pop, window=_WINDOW).run(NaiveRetryPolicy(), events)
-        scripted = RunEngine(pop, window=_WINDOW).run(
+        base = RunEngine(pop, window=EVAL_WINDOW).run(NaiveRetryPolicy(), events)
+        scripted = RunEngine(pop, window=EVAL_WINDOW).run(
             GraphPolicy(brain=FakeBrain(fn=scripted_strategist)), events
         )
         gp = GraphPolicy(brain=brain)
-        llm = RunEngine(pop, window=_WINDOW).run(gp, events)
+        llm = RunEngine(pop, window=EVAL_WINDOW).run(gp, events)
         if journal_dir is not None:
             save_journal(gp.journal_entries(), journal_dir / f"live-seed-{seed}.json")
 

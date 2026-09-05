@@ -14,13 +14,11 @@ import random
 from dataclasses import dataclass
 from itertools import count
 
-from paypilot.domain.calendar import IndianPaymentCalendar
+from paypilot.domain.calendar import IST_OFFSET, IndianPaymentCalendar
 from paypilot.domain.enums import FailureMode
 from paypilot.domain.models import FailureEvent
 from paypilot.simulator.population import Population
 from paypilot.simulator.window import WindowSpec
-
-_IST_OFFSET = dt.timedelta(hours=5, minutes=30)
 
 # Base monthly failure probability outside any special context. Calibrated so the
 # blended rate lands ~15% (research: Razorpay-platform subscriptions fail 8–15%/mo;
@@ -56,7 +54,7 @@ def _debit_datetime_utc(day: dt.date, rng: random.Random) -> dt.datetime:
     ist_hour = rng.randint(8, 21)
     ist_minute = rng.randint(0, 59)
     ist_naive = dt.datetime(day.year, day.month, day.day, ist_hour, ist_minute)
-    return ist_naive.replace(tzinfo=dt.UTC) - _IST_OFFSET  # UTC instant of that IST wall-clock
+    return ist_naive.replace(tzinfo=dt.UTC) - IST_OFFSET  # UTC instant of that IST wall-clock
 
 
 def generate_failures(population: Population, spec: FailureGenSpec) -> tuple[FailureEvent, ...]:

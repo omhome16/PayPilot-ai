@@ -7,12 +7,7 @@ import pytest
 
 from paypilot.domain.enums import FailureMode
 from paypilot.engine.policy import EpisodeView
-from paypilot.voice.node import (
-    DoNotCallError,
-    VoiceChannelUnavailable,
-    VoiceNode,
-    make_voice_node,
-)
+from paypilot.voice.node import DoNotCallError, VoiceChannelUnavailable, VoiceNode
 from paypilot.voice.script import ScriptSafetyError, TemplateScriptWriter
 from paypilot.voice.tts import NoopTTS
 
@@ -44,12 +39,6 @@ def test_voice_node_produces_safe_call_artifact() -> None:
     assert "Priya" in call.script_hinglish and "1,499" in call.script_hinglish
     assert call.audio_path is None  # TTS backend not attached yet
     assert call.source == "template"
-
-
-def test_make_voice_node_factory_uses_explicit_reference_writer() -> None:
-    make = make_voice_node(merchant_name="StreamFlix", writer=TemplateScriptWriter())
-    call = make(_view(), "Rahul", "https://rzp.io/rzp/x")
-    assert call.merchant_name == "StreamFlix"
 
 
 def test_voice_node_without_writer_is_fail_loud() -> None:

@@ -5,20 +5,16 @@ The 'focus' world additionally contributes the action mix and per-episode
 journaled-decision timelines for the story view.
 """
 
-import datetime as dt
 from typing import Any
 
 from paypilot.engine.runner import RunEngine
-from paypilot.eval.multiseed import run_multi_seed, scripted_strategist
+from paypilot.eval.multiseed import EVAL_WINDOW, run_multi_seed, scripted_strategist
 from paypilot.graph.brain import FakeBrain
 from paypilot.graph.policy_adapter import GraphPolicy
 from paypilot.simulator.failure_gen import FailureGenSpec, generate_failures
 from paypilot.simulator.population import PopulationSpec, generate_population
-from paypilot.simulator.window import WindowSpec
 from paypilot.voice.node import VoiceNode
 from paypilot.voice.script import TemplateScriptWriter
-
-_WINDOW = WindowSpec(start=dt.date(2026, 9, 1), end=dt.date(2026, 9, 30))
 
 _KIND_LABEL = {
     "action": "action",
@@ -64,11 +60,11 @@ def build_dashboard_data(
 
     # focus world: action mix + episode story timelines from the decision journal
     pop = generate_population(PopulationSpec(size=min(stability_size, 120), seed=focus_seed))
-    events = generate_failures(pop, FailureGenSpec(window=_WINDOW, seed=focus_seed))
+    events = generate_failures(pop, FailureGenSpec(window=EVAL_WINDOW, seed=focus_seed))
     gp = GraphPolicy(brain=FakeBrain(fn=scripted_strategist))
     # reference voice node: deterministic scripts, explicitly opted into (fail-loud)
     voice = VoiceNode(merchant_name="PayPilot", writer=TemplateScriptWriter())
-    run = RunEngine(pop, window=_WINDOW, voice_node=voice).run(gp, events)
+    run = RunEngine(pop, window=EVAL_WINDOW, voice_node=voice).run(gp, events)
     voice_calls = len(voice.calls)
 
     mix_counter: dict[str, int] = {}

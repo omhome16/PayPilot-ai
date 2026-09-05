@@ -91,6 +91,7 @@ def create_app(
         else None
     )
     conversations: dict[str, Conversation] = {}
+    _MAX_SESSIONS = 50  # bounded demo memory: evict oldest call when the cap is hit
 
     app = FastAPI(title="PayPilot.AI", version="0.1.0")
 
@@ -106,6 +107,23 @@ def create_app(
     def record(entry: dict[str, Any]) -> None:
         events.append({"ts": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), **entry})
         del events[:-_MAX_EVENTS]
+
+    async def _json_body(request: Request) -> dict[str, Any]:
+        """Body as a dict, or {} on missing/malformed/JSON-array bodies — every
+        endpoint treats an unparseable body as "no options given", never a crash."""
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    async def _signed_post(payload: dict[str, Any], source: str) -> dict[str, Any] | JSONResponse:
+        """Sign a demo payload with the webhook secret and run it through the
+        real webhook pipeline (one code path for both /monitor/simulate and the
+        Webhook Lab)."""
+        body = json.dumps(payload).encode()
+        sig = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+        return await process_webhook(body, sig, source)
 
     async def process_webhook(
         body: bytes, signature: str, source: str
@@ -243,10 +261,7 @@ def create_app(
 
     @app.post("/voice/open", response_model=None)
     async def voice_open(request: Request) -> dict[str, Any] | JSONResponse:
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            body = {}
+        body = await _json_body(request)
         sub_id = str(body.get("subscription_id", "sub_0001"))
         row = demo_store.customer_by_subscription(sub_id)
         if row is None:
@@ -275,6 +290,9 @@ def create_app(
         )
         session_id = f"call_{len(conversations) + 1}"
         conversations[session_id] = conv
+        if len(conversations) > _MAX_SESSIONS:
+            # demo memory stays bounded — evict the oldest entry (done or not)
+            conversations.pop(next(iter(conversations)))
         turn = conv.open()
         return {
             "session_id": session_id,
@@ -285,10 +303,7 @@ def create_app(
 
     @app.post("/voice/turn", response_model=None)
     async def voice_turn(request: Request) -> dict[str, Any] | JSONResponse:
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            body = {}
+        body = await _json_body(request)
         conv = conversations.get(str(body.get("session_id", "")))
         if conv is None:
             return JSONResponse(status_code=404, content={"detail": "unknown session"})
@@ -302,7 +317,8 @@ def create_app(
 
     @app.get("/monitor")
     def monitor() -> HTMLResponse:
-        return HTMLResponse(_MONITOR_HTML)
+        html = (_STATIC_DIR / "monitor.html").read_text(encoding="utf-8")
+        return HTMLResponse(html)
 
     @app.get("/monitor/data")
     def monitor_data() -> dict[str, Any]:
@@ -318,17 +334,12 @@ def create_app(
 
     @app.post("/monitor/simulate", response_model=None)
     async def monitor_simulate(request: Request) -> dict[str, Any] | JSONResponse:
-        try:
-            spec = await request.json()
-            scenario = str((spec or {}).get("scenario", "fresh_funds"))
-        except (json.JSONDecodeError, ValueError):
-            scenario = "fresh_funds"
+        spec = await _json_body(request)
+        scenario = str(spec.get("scenario", "fresh_funds"))
         payload = _SIMULATIONS.get(scenario)
         if payload is None:
             return JSONResponse(status_code=422, content={"detail": f"unknown scenario {scenario}"})
-        body = json.dumps(payload).encode()
-        sig = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
-        result = await process_webhook(body, sig, f"simulate:{scenario}")
+        result = await _signed_post(payload, f"simulate:{scenario}")
         return result if isinstance(result, dict) else {"status": result.status_code}
 
     # -- Command Center: extra surfaces --------------------------------------------
@@ -336,10 +347,7 @@ def create_app(
     @app.post("/monitor/fire", response_model=None)
     async def monitor_fire(request: Request) -> dict[str, Any] | JSONResponse:
         """Webhook Lab: fire a CUSTOM signed payment.failed (any mode/amount/attempt)."""
-        try:
-            spec = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            spec = {}
+        spec = await _json_body(request)
         try:
             mode = str(spec.get("mode", FailureMode.INSUFFICIENT_FUNDS.value))
             amount = max(int(spec.get("amount_paise", 99_900)), 1)
@@ -349,9 +357,7 @@ def create_app(
         except (TypeError, ValueError):
             return JSONResponse(status_code=422, content={"detail": "bad spec"})
         payload = _demo_payload(mode, amount, attempt, sub_id, name)
-        body = json.dumps(payload).encode()
-        sig = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
-        result = await process_webhook(body, sig, "lab")
+        result = await _signed_post(payload, "lab")
         return result if isinstance(result, dict) else {"status": result.status_code}
 
     @app.get("/store/tables")
@@ -372,10 +378,7 @@ def create_app(
     async def agent_trace(request: Request) -> dict[str, Any] | JSONResponse:
         """Run ONE episode through the real LangGraph (reference doctrine brain) and
         return the node-by-node trace the Agent Graph panel animates."""
-        try:
-            spec = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            spec = {}
+        spec = await _json_body(request)
         outage = bool(spec.get("outage", False))
         try:
             mode = FailureMode(str(spec.get("mode", FailureMode.INSUFFICIENT_FUNDS.value)))
@@ -383,19 +386,22 @@ def create_app(
             return JSONResponse(status_code=422, content={"detail": "unknown mode"})
         if outage:
             return {"steps": _outage_trace(mode)}
-        episode = EpisodeView(
-            subscription_id=str(spec.get("subscription_id", "sub_demo_trace")),
-            episode_no=max(int(spec.get("episode_no", 1)), 1),
-            mode=mode,
-            amount_paise=max(int(spec.get("amount_paise", 99_900)), 1),
-            first_failed_at=dt.datetime.fromtimestamp(
-                int(spec.get("first_failed_ts", 1_788_000_000)), tz=dt.UTC
-            ),
-            attempts_made=max(int(spec.get("attempts_made", 1)), 1),
-            rail=MandateRail(str(spec.get("rail", MandateRail.UPI_AUTOPAY.value))),
-            billing_day=max(int(spec.get("billing_day", 29)), 1),
-            vertical=str(spec.get("vertical", "ott")),
-        )
+        try:
+            episode = EpisodeView(
+                subscription_id=str(spec.get("subscription_id", "sub_demo_trace")),
+                episode_no=max(int(spec.get("episode_no", 1)), 1),
+                mode=mode,
+                amount_paise=max(int(spec.get("amount_paise", 99_900)), 1),
+                first_failed_at=dt.datetime.fromtimestamp(
+                    int(spec.get("first_failed_ts", 1_788_000_000)), tz=dt.UTC
+                ),
+                attempts_made=max(int(spec.get("attempts_made", 1)), 1),
+                rail=MandateRail(str(spec.get("rail", MandateRail.UPI_AUTOPAY.value))),
+                billing_day=max(int(spec.get("billing_day", 29)), 1),
+                vertical=str(spec.get("vertical", "ott")),
+            )
+        except (TypeError, ValueError):
+            return JSONResponse(status_code=422, content={"detail": "bad trace spec"})
         graph = build_recovery_graph(brain=FakeBrain(fn=scripted_strategist))
         final = graph.invoke({"episode": episode, "consult_seq": 1})
         return {
@@ -408,10 +414,7 @@ def create_app(
     @app.post("/eval/quick", response_model=None)
     async def eval_quick(request: Request) -> dict[str, Any]:
         """Eval panel: a bounded agent-vs-baseline sweep on seeded worlds."""
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            body = {}
+        body = await _json_body(request)
         worlds = min(max(int(body.get("worlds", 5)), 1), 20)
         size = min(max(int(body.get("size", 200)), 50), 300)
         key = f"{worlds}:{size}"
@@ -720,130 +723,3 @@ _SIMULATIONS: dict[str, dict[str, Any]] = {
     # third failed attempt on a big ticket → personal voice channel
     "voice": _demo_payload("insufficient_funds", 150_000, 3, "sub_demo_voice", "Priya"),
 }
-
-_MONITOR_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>PayPilot — Live Recovery Monitor</title>
-<style>
-  :root { --glass: rgba(255,255,255,0.06); --line: rgba(255,255,255,0.14);
-          --text: rgba(255,255,255,0.92); --muted: rgba(255,255,255,0.55);
-          --faint: rgba(255,255,255,0.32); color-scheme: dark; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#050505; color:var(--text);
-         font:15px/1.6 "Segoe UI", system-ui, sans-serif;
-         padding:32px clamp(16px,4vw,64px); }
-  h1 { font-size:22px; font-weight:600; }
-  .sub { color:var(--muted); margin-top:4px; max-width:760px; }
-  .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px; }
-  button { background:var(--glass); color:var(--text); border:1px solid var(--line);
-           border-radius:12px; padding:10px 16px; cursor:pointer; font-size:14px; }
-  button:hover { background:rgba(255,255,255,0.12); }
-  .kpis { display:flex; gap:12px; flex-wrap:wrap; margin-top:20px; }
-  .kpi { background:var(--glass); border:1px solid var(--line); border-radius:14px;
-         padding:12px 18px; min-width:120px; }
-  .kpi .n { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums; }
-  .kpi .l { color:var(--muted); font-size:11px; text-transform:uppercase;
-            letter-spacing:.1em; }
-  .card { background:var(--glass); border:1px solid var(--line); border-radius:16px;
-          padding:16px 20px; margin-top:14px; }
-  .meta { color:var(--muted); font-size:12.5px; }
-  .action { font-weight:650; margin-top:4px; }
-  .reason { color:var(--muted); font-size:13px; }
-  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-  .chip { border:1px solid var(--line); border-radius:999px; padding:2px 10px;
-          font-size:11.5px; color:var(--muted); }
-  .script { margin-top:10px; padding:12px 14px; border-left:3px solid var(--line);
-            background:rgba(255,255,255,0.03); border-radius:0 10px 10px 0;
-            font-size:14px; }
-  .play { margin-top:10px; }
-  .mute { color:var(--faint); font-size:12.5px; }
-</style>
-</head>
-<body>
-<h1>PayPilot — Live Recovery Monitor</h1>
-<p class="sub">Every card is a signed <code>payment.failed</code> webhook processed by the
-agent: diagnose → decide within hard compliance rails → act. Voice decisions carry the
-strategy brief and the exact Hinglish script a call would speak.</p>
-
-<div class="row">
-  <button onclick="sim('fresh_funds')">Simulate: fresh cash-crunch (₹499)</button>
-  <button onclick="sim('revoked')">Simulate: mandate revoked (₹999)</button>
-  <button onclick="sim('voice')">Simulate: 3rd failure, big ticket (₹1,500 → voice)</button>
-</div>
-
-<div class="kpis" id="kpis"></div>
-<div id="stream"></div>
-
-<script>
-const esc = s => String(s ?? "").replace(/[&<>"']/g,
-  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-function play(btn) {
-  const u = new SpeechSynthesisUtterance(btn.getAttribute("data-script"));
-  u.lang = "hi-IN"; u.rate = 0.95;
-  speechSynthesis.cancel(); speechSynthesis.speak(u);
-}
-function stopCall() { speechSynthesis.cancel(); }
-async function sim(s) {
-  await fetch("/monitor/simulate", { method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({scenario: s}) });
-  refresh();
-}
-async function refresh() {
-  const d = await (await fetch("/monitor/data")).json();
-  const c = d.counters;
-  document.getElementById("kpis").innerHTML =
-    `<div class="kpi"><div class="n">${c.events ?? 0}</div>` +
-    `<div class="l">webhooks</div></div>` +
-    ["smart_retry", "payment_link", "voice_nudge", "human_escalation"].map(a =>
-      `<div class="kpi"><div class="n">${c[a] ?? 0}</div>` +
-      `<div class="l">${esc(a)}</div></div>`).join("");
-  document.getElementById("stream").innerHTML = d.events.map(e => {
-    if (e.status !== 200 || e.action === undefined)
-      return `<div class="card"><span class="mute">${esc(e.ts)} · ${esc(e.source)} · ` +
-             `HTTP ${esc(e.status)} — ${esc(e.detail || "")}</span></div>`;
-    let html = `<div class="card">` +
-      `<div class="meta">${esc(e.ts)} · ${esc(e.source)} · ${esc(e.customer || "")} · ` +
-      `${esc(e.mode)} · ₹${esc(e.amount_rupees)} · attempt ${esc(e.attempt_no)}</div>` +
-      `<div class="action">${e.action ? esc(e.action) : "give up (no safe action)"}` +
-      ` — <span class="reason">${esc(e.reason || "")}</span></div>`;
-    const v = e.voice;
-    if (v) {
-      const st = v.strategy || {};
-      if (v.escalated) {
-        // fail-loud: the voice channel could not execute → humans took over
-        html += `<div class="chips">` +
-          `<span class="chip">⚠ fail-loud: escalated to human review</span></div>` +
-          `<div class="reason">${esc(v.reason || "voice channel unavailable")}</div>`;
-      } else {
-        const ratio = st.on_time_ratio == null ? "" :
-          ` (${esc(st.on_time_ratio)} on-time)`;
-        const safety = st.safety && st.safety.ok ? "✓ opt-out + merchant ID"
-          : "✗ " + esc((st.safety || {}).violations);
-        const chips = [
-          `history: ${esc(st.history_tone)}${ratio}`,
-          `after ${esc(st.failed_attempts)} failed attempt` +
-            `${st.failed_attempts == 1 ? "" : "s"}`,
-          st.days_to_salary != null ? `salary in ${esc(st.days_to_salary)}d` : null,
-          `script: ${esc(v.source)}`,
-          `safety: ${safety}`,
-        ].filter(Boolean).map(x => `<span class="chip">${x}</span>`).join("");
-        html += `<div class="chips">${chips}</div>` +
-          `<div class="script">${esc(v.script)}</div>` +
-          `<button class="play" data-script="${esc(v.script)}" ` +
-          `onclick="play(this)">▶ Play call</button> ` +
-          `<button class="play" onclick="stopCall()">■ Stop</button>`;
-      }
-    }
-    return html + `</div>`;
-  }).join("") || `<div class="card mute">No events yet — fire a simulation above.</div>`;
-}
-refresh(); setInterval(refresh, 1500);
-</script>
-</body>
-</html>"""

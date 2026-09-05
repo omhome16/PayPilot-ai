@@ -56,23 +56,8 @@ def _sense(state: GraphState) -> GraphState:
     }
     history_note = ""
     if ep.profile is not None:
-        ratio = round(ep.profile.on_time_ratio, 2)
-        story["history"] = {
-            "tenure_cycles": ep.profile.tenure_cycles,
-            "on_time_ratio": ratio,
-            "missed_cycles": ep.profile.missed_cycles,
-            "link_affinity": round(ep.profile.link_affinity, 2),
-        }
-        tone = (
-            "reliable payer"
-            if ratio >= 0.8
-            else "mixed record"
-            if ratio >= 0.5
-            else "history of misses"
-        )
-        history_note = (
-            f"history: {tone} ({int(ep.profile.paid_on_time)}/{ep.profile.tenure_cycles} on time)"
-        )
+        history_note, history = ep.profile.summary()
+        story["history"] = history
     return {"story": story, "history_note": history_note}
 
 

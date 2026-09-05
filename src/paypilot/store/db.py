@@ -19,11 +19,9 @@ import datetime as dt
 import json
 import sqlite3
 import threading
-from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from paypilot.domain.models import Customer, CustomerProfile, Mandate, Subscription
 from paypilot.simulator.population import Population
 
 _SCHEMA = """
@@ -333,41 +331,3 @@ class Store:
                     round(latency_ms, 3),
                 ),
             )
-
-    # -- read iterators for streaming exports ---------------------------------------
-
-    def iter_decisions(self) -> Iterator[dict[str, Any]]:
-        with self._lock:
-            rows = list(
-                self._conn.execute("SELECT * FROM decisions ORDER BY id").fetchall()
-            )
-        for r in rows:
-            yield dict(r)
-
-    def iter_episodes(self) -> Iterator[dict[str, Any]]:
-        with self._lock:
-            rows = list(
-                self._conn.execute(
-                    "SELECT * FROM failure_episodes ORDER BY subscription_id, episode_no"
-                ).fetchall()
-            )
-        for r in rows:
-            yield dict(r)
-
-    # convenience: python-typed seeding helpers used by callers holding domain objects
-    def seed_domain_rows(
-        self,
-        customers: Sequence[Customer],
-        subscriptions: Sequence[Subscription],
-        mandates: Sequence[Mandate],
-        profiles: Sequence[CustomerProfile],
-    ) -> None:
-        """Seed from individual domain-model collections (tests / partial worlds)."""
-        self.seed_population(
-            Population(
-                customers=tuple(customers),
-                subscriptions=tuple(subscriptions),
-                mandates=tuple(mandates),
-                profiles=tuple(profiles),
-            )
-        )

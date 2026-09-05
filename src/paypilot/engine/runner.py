@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from itertools import count
 
-from paypilot.domain.calendar import IndianPaymentCalendar
+from paypilot.domain.calendar import IST_OFFSET, IndianPaymentCalendar
 from paypilot.domain.enums import FailureMode, Intervention, MandateRail
 from paypilot.domain.models import FailureEvent
 from paypilot.engine.policy import EpisodeView, Policy, ProposedAction
@@ -30,7 +30,6 @@ from paypilot.voice.models import VoiceCall
 from paypilot.voice.node import DoNotCallError, VoiceChannelUnavailable, VoiceNode
 from paypilot.voice.script import ScriptSafetyError, VoiceWriterUnavailable
 
-_IST_OFFSET = dt.timedelta(hours=5, minutes=30)
 _LEGAL_START = 8  # 08:00 IST
 _LEGAL_END = 21  # last legal start hour (through 21:59)
 _GRACE_DAYS = 7
@@ -75,14 +74,14 @@ class _EpisodeState:
 
 def _clamp_to_legal_hours(when_utc: dt.datetime) -> dt.datetime:
     """Move a UTC instant into the legal IST debit window (08:00–21:59)."""
-    ist = when_utc + _IST_OFFSET
+    ist = when_utc + IST_OFFSET
     if _LEGAL_START <= ist.hour <= _LEGAL_END:
         return when_utc
     # push to 10:00 IST the same day (or next day if the clamp crossed midnight)
     target = ist.replace(hour=10, minute=0, second=0, microsecond=0)
     if ist.hour > _LEGAL_END:
         target += dt.timedelta(days=1)
-    return target - _IST_OFFSET
+    return target - IST_OFFSET
 
 
 class RunEngine:
@@ -171,7 +170,7 @@ class RunEngine:
                 )
                 continue
 
-            ist_date = (clamped + _IST_OFFSET).date()
+            ist_date = (clamped + IST_OFFSET).date()
             days_to_salary = (cal.next_salary_date(ist_date) - ist_date).days
 
             attempt_no = st.attempts_made + 1

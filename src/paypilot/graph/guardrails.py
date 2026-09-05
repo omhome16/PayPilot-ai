@@ -10,8 +10,9 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Protocol
 
+from paypilot.domain.calendar import ist_date_of, next_salary_date, utc_at_ist_hour
 from paypilot.domain.enums import FailureMode, Intervention
-from paypilot.engine.agent import STANDARD, Appetite, _next_salary_date, _utc_at_ist_hour
+from paypilot.engine.agent import STANDARD, Appetite
 from paypilot.engine.policy import EpisodeView
 from paypilot.graph.brain import BrainProposal
 
@@ -26,8 +27,8 @@ class GuardrailReport:
 def proposal_run_at(proposal: BrainProposal, episode: EpisodeView) -> dt.datetime:
     """Resolve a proposal's schedule against the episode (salary-day aware)."""
     if proposal.on_salary_day:
-        d = _next_salary_date(episode.first_failed_at + dt.timedelta(days=1))
-        return _utc_at_ist_hour(d, 10)
+        d = next_salary_date(ist_date_of(episode.first_failed_at + dt.timedelta(days=1)))
+        return utc_at_ist_hour(d, 10)
     return episode.first_failed_at + dt.timedelta(days=proposal.days_ahead)
 
 

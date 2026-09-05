@@ -22,17 +22,14 @@ script to a real audio file and the artifact's audio_path becomes that path.
 """
 
 import datetime as dt
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from paypilot.domain.calendar import IndianPaymentCalendar
+from paypilot.domain.calendar import ist_date_of, next_salary_date
 from paypilot.engine.policy import EpisodeView
 from paypilot.voice.models import VoiceCall
 from paypilot.voice.safety import validate_script
 from paypilot.voice.script import CallScript, ScriptSafetyError
-
-_IST = dt.timedelta(hours=5, minutes=30)
 
 
 class DoNotCallError(ValueError):
@@ -164,23 +161,5 @@ class VoiceNode:
     @staticmethod
     def _days_to_salary(episode: EpisodeView) -> int:
         """Calendar-aware scripts: the salary line only fires when it's true."""
-        ist_date = (episode.first_failed_at + _IST).date()
-        cal = IndianPaymentCalendar.with_default_festivals(year=ist_date.year)
-        return (cal.next_salary_date(ist_date) - ist_date).days
-
-
-def make_voice_node(
-    merchant_name: str,
-    writer: ScriptWriter | None = None,
-) -> Callable[[EpisodeView, str, str], VoiceCall]:
-    """Factory for graph wiring: returns a plain make_call closure.
-
-    writer=None ⇒ the closure raises VoiceChannelUnavailable (fail-loud); pass
-    TemplateScriptWriter() explicitly for the deterministic reference channel.
-    """
-    node = VoiceNode(merchant_name=merchant_name, writer=writer)
-
-    def _make(episode: EpisodeView, customer_name: str, payment_url: str) -> VoiceCall:
-        return node.make_call(episode, customer_name, payment_url)
-
-    return _make
+        ist_date = ist_date_of(episode.first_failed_at)
+        return (next_salary_date(ist_date) - ist_date).days

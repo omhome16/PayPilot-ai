@@ -18,7 +18,7 @@ from paypilot.simulator.failure_gen import FailureGenSpec, generate_failures
 from paypilot.simulator.population import PopulationSpec, generate_population
 from paypilot.simulator.window import WindowSpec
 
-_WINDOW = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
+EVAL_WINDOW = WindowSpec(start=date(2026, 9, 1), end=date(2026, 9, 30))
 
 
 def scripted_strategist(state: dict[str, Any]) -> BrainProposal:
@@ -92,12 +92,12 @@ def run_multi_seed(seeds: list[int], size: int = 300) -> list[SeedOutcome]:
     outcomes: list[SeedOutcome] = []
     for seed in seeds:
         pop = generate_population(PopulationSpec(size=size, seed=seed))
-        events = generate_failures(pop, FailureGenSpec(window=_WINDOW, seed=seed))
+        events = generate_failures(pop, FailureGenSpec(window=EVAL_WINDOW, seed=seed))
 
-        base = RunEngine(pop, window=_WINDOW).run(NaiveRetryPolicy(), events)
+        base = RunEngine(pop, window=EVAL_WINDOW).run(NaiveRetryPolicy(), events)
 
         gp = GraphPolicy(brain=FakeBrain(fn=scripted_strategist))
-        agent = RunEngine(pop, window=_WINDOW).run(gp, events)
+        agent = RunEngine(pop, window=EVAL_WINDOW).run(gp, events)
 
         outcomes.append(
             SeedOutcome(

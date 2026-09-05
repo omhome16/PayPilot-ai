@@ -14,6 +14,7 @@ import httpx
 
 from paypilot.domain.enums import Intervention
 from paypilot.graph.brain import BrainProposal
+from paypilot.llm import ChatClient, parse_json_object
 
 
 class BrainUnavailable(RuntimeError):
@@ -52,17 +53,8 @@ class OpenRouterBrain:
         base_url: str = "https://openrouter.ai/api/v1",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._model = model
-        self._client = httpx.Client(
-            base_url=base_url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/omhome16/PayPilot-ai",
-                "X-Title": "PayPilot.AI",
-            },
-            timeout=10.0,
-            transport=transport,
+        self._client = ChatClient(
+            api_key=api_key, model=model, base_url=base_url, transport=transport
         )
         self.calls = 0
         self.tokens_used = 0
@@ -73,13 +65,7 @@ class OpenRouterBrain:
             {"role": "system", "content": PROMPT_GRAPH_V1},
             {"role": "user", "content": json.dumps(state)},
         ]
-        body: dict[str, Any] = {
-            "model": self._model,
-            "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": 150,
-        }
-        content = self._call(body)
+        content = self._call(messages)
         parsed = self._parse(content)
         if parsed is not None:
             return parsed
@@ -94,7 +80,7 @@ class OpenRouterBrain:
                 ),
             }
         )
-        content2 = self._call(body)
+        content2 = self._call(messages)
         parsed2 = self._parse(content2)
         if parsed2 is not None:
             return parsed2
@@ -103,39 +89,26 @@ class OpenRouterBrain:
             raise BrainUnavailable("LLM brain call failed (network/API error)")
         raise BrainUnavailable("LLM brain output unparseable after repair round")
 
-    def _call(self, body: dict[str, Any]) -> str | None:
-        try:
-            r = self._client.post("/chat/completions", json=body)
-            r.raise_for_status()
-            data = r.json()
-            self.tokens_used += int(data.get("usage", {}).get("total_tokens", 0))
-            return str(data["choices"][0]["message"]["content"]).strip()
-        except Exception:  # noqa: BLE001 — failure is surfaced loudly by the caller
-            return None
+    def _call(self, messages: list[dict[str, str]]) -> str | None:
+        content, _ = self._client.complete(messages, temperature=0.2, max_tokens=150)
+        self.tokens_used = self._client.tokens_used
+        return content
 
     @staticmethod
     def _parse(content: str | None) -> BrainProposal | None:
-        if not content:
+        d = parse_json_object(content)
+        if d is None:
             return None
-        text = content.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-        try:
-            d = json.loads(text.strip())
-            action_raw = str(d.get("action", "")).lower()
-            action = _ALLOWED.get(action_raw)
-            if action is None:
-                return None
-            # Mode legality is NOT checked here — that is the guardrails' job (R1).
-            # Pre-filtering would burn a repair round; the rails dispose either way.
-            return BrainProposal(
-                action=action,
-                on_salary_day=bool(d.get("on_salary_day", False)),
-                days_ahead=max(0, min(int(d.get("days_ahead", 1)), 14)),
-                reason=str(d.get("reason", ""))[:200],
-                raw=d,
-            )
-        except (json.JSONDecodeError, ValueError, KeyError):
+        action_raw = str(d.get("action", "")).lower()
+        action = _ALLOWED.get(action_raw)
+        if action is None:
             return None
+        # Mode legality is NOT checked here — that is the guardrails' job (R1).
+        # Pre-filtering would burn a repair round; the rails dispose either way.
+        return BrainProposal(
+            action=action,
+            on_salary_day=bool(d.get("on_salary_day", False)),
+            days_ahead=max(0, min(int(d.get("days_ahead", 1)), 14)),
+            reason=str(d.get("reason", ""))[:200],
+            raw=d,
+        )

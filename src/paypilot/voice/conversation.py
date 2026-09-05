@@ -23,6 +23,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from paypilot.llm import ChatClient, parse_json_object
 from paypilot.store.tools import RecoveryTools
 from paypilot.voice.script import (
     CallScript,
@@ -162,12 +163,8 @@ class OpenRouterDialogueBrain:
         base_url: str = "https://openrouter.ai/api/v1",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._model = model
-        self._client = httpx.Client(
-            base_url=base_url,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            timeout=10.0,
-            transport=transport,
+        self._client = ChatClient(
+            api_key=api_key, model=model, base_url=base_url, transport=transport
         )
         self.calls = 0
         self.tokens_used = 0
@@ -202,35 +199,14 @@ class OpenRouterDialogueBrain:
         raise VoiceWriterUnavailable("dialogue brain output unparseable after repair round")
 
     def _call(self, messages: list[dict[str, str]]) -> str | None:
-        try:
-            r = self._client.post(
-                "/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": messages,
-                    "temperature": 0.4,
-                    "max_tokens": 300,
-                },
-            )
-            r.raise_for_status()
-            data = r.json()
-            self.tokens_used += int(data.get("usage", {}).get("total_tokens", 0))
-            return str(data["choices"][0]["message"]["content"]).strip()
-        except Exception:  # noqa: BLE001 — surfaced loudly by respond()
-            return None
+        content, _ = self._client.complete(messages, temperature=0.4, max_tokens=300)
+        self.tokens_used = self._client.tokens_used
+        return content
 
     @staticmethod
     def _parse(content: str | None) -> dict[str, Any] | None:
-        if not content:
-            return None
-        text = content.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-        try:
-            d = json.loads(text.strip())
-        except (json.JSONDecodeError, ValueError):
+        d = parse_json_object(content)
+        if d is None:
             return None
         reply = str(d.get("reply", "")).strip()
         outcome = str(d.get("outcome", "none")).strip().lower()

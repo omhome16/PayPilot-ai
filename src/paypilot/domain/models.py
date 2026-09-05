@@ -108,3 +108,29 @@ class CustomerProfile(_Strict):
     @property
     def on_time_ratio(self) -> float:
         return self.paid_on_time / self.tenure_cycles
+
+    @property
+    def history_tone(self) -> str:
+        """Bucket label for the on-time ratio (shared by every SENSE layer)."""
+        ratio = round(self.on_time_ratio, 2)
+        if ratio >= 0.8:
+            return "reliable payer"
+        if ratio >= 0.5:
+            return "mixed record"
+        return "history of misses"
+
+    def summary(self) -> tuple[str, dict[str, int | float]]:
+        """(history_note, history dict) for a customer's profile — one-line
+        narrative plus the JSON-safe numbers every SENSE node attaches to its
+        story. Single source of truth so LLM states never drift between layers."""
+        ratio = round(self.on_time_ratio, 2)
+        note = (
+            f"history: {self.history_tone} ({int(self.paid_on_time)}/{self.tenure_cycles} on time)"
+        )
+        history = {
+            "tenure_cycles": self.tenure_cycles,
+            "on_time_ratio": ratio,
+            "missed_cycles": self.missed_cycles,
+            "link_affinity": round(self.link_affinity, 2),
+        }
+        return note, history

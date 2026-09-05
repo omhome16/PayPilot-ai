@@ -21,13 +21,8 @@ _LAWFUL_DEFAULT = BrainProposal(
 )
 
 
-_LAWFUL_ABSTAIN = BrainProposal(
-    action=Intervention.SMART_RETRY,  # never used: abstain short-circuits first
-    reason="replay abstention",
-)
-
-
 def _abstain() -> BrainProposal:
+    """Recorded 'do nothing' consult — abstain short-circuits before the action runs."""
     return BrainProposal(
         action=Intervention.SMART_RETRY,  # never used: abstain short-circuits first
         reason="replay: recorded abstention",
